@@ -34,7 +34,7 @@ mds_top
 ; ABI version string
 ;----------------------------------------------------------------------
 version_str
-	dc.b	"MDSDRV0.6 230612"
+	dc.b	"MDSDRV0.7 241205"
 version_str_end
 	dc.b	0
 	even
@@ -90,6 +90,7 @@ mds_init
 	move.w	#107,d1							; PAL tempo
 @set_tempo
 	move.w	d1,w_gtempo(a0)					; set global tempo
+	move.w	#$ace1,w_rng(a0)				; initialize RNG seed
 
 	lea		w_track(a0),a1					; track addr
 	move.w	#TCOUNT-1,d1
@@ -1123,7 +1124,7 @@ mds_update_seq
 ;----------------------------------------------------------------------
 @cmd_length_table
 	dc.b	1,2,2,2, 2,2,2,2, 2,2,2,2, 2,3,3,3		;e0
-	dc.b	2,2,2,0, 0,3,3,0, 2,2,1,2, 2,3,1,0		;f0
+	dc.b	2,2,2,2, 0,3,3,0, 2,2,1,2, 2,3,1,0		;f0 (f3=rndpat)
 @cmd_table
 	bra.w	@cmd_slr						;e0 slur
 	bra.w	@cmd_ins						;e1 instrument
@@ -1144,7 +1145,7 @@ mds_update_seq
 	bra.w	@cmd_pcm						;f0 pcm instrument
 	bra.w	@cmd_pcmrate					;f1 pcm rate
 	bra.w	@cmd_pcmmode					;f2 pcm mode
-	bra.w	@cmd_finish						;f3
+	bra.w	@cmd_rndpat						;f3 random pattern select
 	bra.w	@cmd_finish						;f4
 	bra.w	@cmd_jump						;f5 jump
 	bra.w	@cmd_fmreg						;f6 fm register write
@@ -1590,6 +1591,55 @@ mds_update_seq
 	bsr.w	mds_set_pcm_mode
 	mds_z80_start
 	move.w	@tempreg,d0
+	bra.w	@next_command
+
+;----------------------------------------------------------------------
+; rndpat - random pattern selection
+;----------------------------------------------------------------------
+; Format: $f3 nn ii [ii] ...
+;   nn = number of choices (2-8)
+;   ii = subroutine index for each choice (like pat command)
+;----------------------------------------------------------------------
+@cmd_rndpat
+	clr.w	@cmd
+	move.b	0(@tbase,@trackpos),@cmd		; get count
+
+	; Generate pseudo-random number using LFSR
+	move.w	w_rng(work),@tempreg
+	move.w	@tempreg,-(sp)
+	lsr.w	#1,@tempreg
+	bcc.s	@rng_no_tap
+	eori.w	#$b400,@tempreg					; taps at bits 15,13,12,10
+@rng_no_tap
+	move.w	@tempreg,w_rng(work)
+	move.w	(sp)+,@tempreg
+
+	; @tempreg mod (count) to get selection index
+	andi.w	#$00ff,@tempreg					; use low byte
+	divu.w	@cmd,@tempreg					; divide by count
+	swap	@tempreg						; get remainder
+
+	; Calculate total command length
+	; Length = 1 (count byte) + count (index bytes)
+	move.w	@cmd,@cmdlen
+	addq.w	#2,@cmdlen						; cmdlen = count + 2 (cmd byte + count byte)
+
+	; Read selected subroutine index
+	; @tempreg = selected index (0-based), need to skip count byte (+1)
+	addq.w	#1,@tempreg						; skip count byte
+	add.w	@trackpos,@tempreg				; add current position
+	clr.w	@cmd
+	move.b	0(@tbase,@tempreg),@cmd			; get subroutine index
+
+	; Advance past rndpat command and push return address
+	add.w	@cmdlen,@trackpos
+	move.w	@trackpos,t_stack(twork,@sp)	; push return address
+	addq.b	#2,@sp
+
+	; Look up subroutine address and jump
+	add.w	@cmd,@cmd						; index * 2
+	move.w	0(@tbase,@cmd),@trackpos		; get subroutine address
+	moveq	#1,@cmdlen
 	bra.w	@next_command
 
 ;======================================================================

@@ -24,7 +24,7 @@
 ;======================================================================
 ; system defines
 ;======================================================================
-MDSDRV_VER		equ		$0006		; sound driver version
+MDSDRV_VER		equ		$0007		; sound driver version
 MDSDRV_MIN_VER	equ		$0003		; minimum sequence data version
 
 RCOUNT			equ		4			; request count
@@ -250,6 +250,7 @@ w_fm3_mask		rs.b	1			;fm3 keyon operator mask
 w_fm3_alg		rs.b	1
 w_fm3_tl		rs.b	4
 
+w_rng			rs.w	1			;random number state (LFSR)
 w_gtempo		rs.w	1			;global tempo
 
 w_track			rs.b	TSIZE*TCOUNT

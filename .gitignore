@@ -9,3 +9,5 @@ main.bin
 sgdk.bin
 *~
 *.swp
+bin/
+deps/
