@@ -1615,7 +1615,7 @@ mds_update_seq
 	move.w	(sp)+,@tempreg
 
 	; @tempreg mod (count) to get selection index
-	andi.w	#$00ff,@tempreg					; use low byte
+	andi.l	#$00ff,@tempreg					; use low byte (and clear high word)
 	divu.w	@cmd,@tempreg					; divide by count
 	swap	@tempreg						; get remainder
 
