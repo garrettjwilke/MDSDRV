@@ -14,7 +14,6 @@ tools-build: submodules tools-salvador tools-sjasmplus tools-clownassembler
 tools-salvador: tools/salvador
 
 tools/salvador: salvador/salvador
-	@mkdir -p tools
 	cp $< $@
 
 salvador/salvador:
@@ -23,7 +22,6 @@ salvador/salvador:
 tools-sjasmplus: tools/sjasmplus
 
 tools/sjasmplus: sjasmplus/build/release/sjasmplus
-	@mkdir -p tools
 	cp $< $@
 
 sjasmplus/build/release/sjasmplus:
@@ -32,7 +30,6 @@ sjasmplus/build/release/sjasmplus:
 tools-clownassembler: tools/clownassembler_asm68k
 
 tools/clownassembler_asm68k: clownassembler/clownassembler_asm68k
-	@mkdir -p tools
 	cp $< $@
 
 clownassembler/clownassembler_asm68k:
