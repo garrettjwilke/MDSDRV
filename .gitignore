@@ -11,3 +11,4 @@ sgdk.bin
 *.swp
 bin/
 deps/
+tools/*
