@@ -1,4 +1,5 @@
 /out/*
+!out/mdsdrv.bin
 /sample/sgdk/out/*
 /sample/sgdk/res/*.bin
 /sample/sgdk/res/*.h
