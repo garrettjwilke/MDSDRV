@@ -1,9 +1,12 @@
 [submodule "salvador"]
 	path = salvador
 	url = https://github.com/emmanuel-marty/salvador.git
+        ignore = dirty
 [submodule "sjasmplus"]
 	path = sjasmplus
 	url = https://github.com/garrettjwilke/sjasmplus.git
+        ignore = dirty
 [submodule "clownassembler"]
 	path = clownassembler
 	url = https://github.com/garrettjwilke/clownassembler.git
+        ignore = dirty
