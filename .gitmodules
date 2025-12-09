@@ -1,0 +1,9 @@
+[submodule "salvador"]
+	path = salvador
+	url = https://github.com/emmanuel-marty/salvador.git
+[submodule "sjasmplus"]
+	path = sjasmplus
+	url = https://github.com/garrettjwilke/sjasmplus.git
+[submodule "clownassembler"]
+	path = clownassembler
+	url = https://github.com/garrettjwilke/clownassembler.git
