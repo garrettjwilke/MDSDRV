@@ -80,8 +80,12 @@ md_init
 	dc.l	$20202020											;	Slutadress för BRAM
 	dc.b	'                        '							;	Modemkompatibilitet
 ;	dc.b	'                                        '			;	Memo
+	if def(_year)
 @build_year	equ	_year+1900
 	dc.b	' built: \#@build_year/\#_month/\#_day \#_hours:\#_minutes:\#_seconds'
+	else
+	dc.b	' built: unknown date/time'
+	endif
 	dcb.b	$1F0-*,$20
 	dc.b	'JUE             '									;	Regionskompatibilitet
 

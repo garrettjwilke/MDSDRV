@@ -350,7 +350,7 @@ print_instructions
 	p_pos		24,24
 	p_text		"Up/Down: Select"
 	p_shift		1,-1
-	p_text		"A: Play, B: Stop"
+	p_text		"A: Play B: Stop"
 	p_shift		1,9
 	p_text		"C: Fade"
 	p_end
