@@ -84,7 +84,7 @@ md_init
 @build_year	equ	_year+1900
 	dc.b	' built: \#@build_year/\#_month/\#_day \#_hours:\#_minutes:\#_seconds'
 	else
-	dc.b	' built: unknown date/time'
+	dc.b	' built: 0000'
 	endif
 	dcb.b	$1F0-*,$20
 	dc.b	'JUE             '									;	Regionskompatibilitet
