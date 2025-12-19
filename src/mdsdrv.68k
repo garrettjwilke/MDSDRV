@@ -529,6 +529,7 @@ mds_update_priority_return		equ	*
 ;----------------------------------------------------------------------
 ; update tracks and voices
 ;----------------------------------------------------------------------
+	clr.b	w_comm(work)						; clear comm byte for accumulation
 	lea		w_track(work),twork				; first track's addr
 	moveq	#TCOUNT-1,tnum
 
@@ -1465,7 +1466,8 @@ mds_update_seq
 ; comm - communication byte
 ;----------------------------------------------------------------------
 @cmd_comm
-	move.b	0(@tbase,@trackpos),w_comm(work)
+	move.b	0(@tbase,@trackpos),@cmd
+	add.b	@cmd,w_comm(work)					; add to comm byte instead of overwriting
 	bra.w	@next_command
 
 ;----------------------------------------------------------------------
