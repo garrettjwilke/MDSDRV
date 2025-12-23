@@ -34,8 +34,8 @@ z_mode			equ		$0e05	; Current mixing mode
 z_vbl_ack		equ		$0e06	; DMA acknowledgement from main CPU
 
 z_pcm1			equ		$0e08		; PCM 1 variables
-z_pcm2			equ		z_pcm1+8	; PCM 2 variables
-z_pcm3			equ		z_pcm2+8	; PCM 3 variables
+z_pcm2			equ		z_pcm1+16	; PCM 2 variables
+z_pcm3			equ		z_pcm2+16	; PCM 3 variables
 
 zp_key_on		equ		0
 zp_vol			equ		1
@@ -43,6 +43,11 @@ zp_pitch		equ		2
 zp_bank			equ		3
 zp_addr			equ		4
 zp_count		equ		6
+zp_format		equ		8	; Format flag (bit 7: 1=SSDPCM)
+zp_mode			equ		9	; SSDPCM mode
+zp_block_len	equ		10	; SSDPCM block length (2 bytes)
+zp_init_sample	equ		12	; SSDPCM initial sample
+zp_total_blocks	equ		13	; SSDPCM total blocks (2 bytes)
 
 z_pcm1_key_on	equ		z_pcm1+0	; Set to 1 for key on
 z_pcm1_vol		equ		z_pcm1+1	; Volume (10-1f). Key off (f0-ff)
@@ -65,10 +70,23 @@ z_pcm3_bank		equ		z_pcm3+3
 z_pcm3_addr		equ		z_pcm3+4
 z_pcm3_count	equ		z_pcm3+6
 
+
 z_stack			equ		$0f00
 z_buffer		equ		$1f00
 
 z_vtab			equ		$0f00
+
+z_ssdpcm_buf	equ		$1000
+z_ssdpcm_buf_1	equ		z_ssdpcm_buf
+z_ssdpcm_buf_2	equ		z_ssdpcm_buf+$100
+z_ssdpcm_buf_3	equ		z_ssdpcm_buf+$200
+
+z_ssdpcm_state	equ		$1300
+z_ssdpcm_val	equ		0	; Current sample value (16-bit)
+z_ssdpcm_next	equ		2	; Next sample index in block (0-31)
+z_ssdpcm_src	equ		3	; Source address (16-bit)
+z_ssdpcm_bnk	equ		5	; Source bank (8-bit)
+z_ssdpcm_wptr	equ		6	; Write pointer (low byte)
 
 z_pcm_load		equ		z_load
 

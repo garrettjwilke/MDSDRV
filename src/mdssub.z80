@@ -474,6 +474,10 @@ m2_loop
 ; replace with "jp m" to start playback
 m2_pcm1_enable		equ		$
 	jp		m2_pcm1_disabled				; 10 (-> 31)
+	ld		a,(z_pcm1+zp_format)
+	bit		7,a
+	jp		nz,m2_pcm1_ssdpcm_entry
+	ld		a,(z_pcm1+zp_vol)
 	ld		b,a								; 4
 	ld		d,iyh							; 8
 	ld		e,iyl							; 8
@@ -562,9 +566,195 @@ m2_pcm1_nosw
 
 	ld		(m2_pcm1_addr),hl				; 16
 	dec_count m2_pcm1_count,m2_pcm1_enable	; 39
+	jp		m2_pcm1_disabled
 
 ;-------------------------------------------; = 55 + 73 = 128
 
+;======================================================================
+; SSDPCM Mode 2 Entry (Channel 1)
+;----------------------------------------------------------------------
+m2_pcm1_ssdpcm_entry
+	; Swap HL (Source) to IX
+	push	hl
+	pop		ix
+
+	; Sync shadow DE for out_dac
+	ld		d,iyh
+	ld		e,iyl
+	exx
+	ld		d,iyh
+	ld		e,iyl
+	exx
+
+	; Load State
+	ld		a,(z_ssdpcm_state+z_ssdpcm_val)
+	ld		b,a								; Accumulator in B
+	ld		a,(z_ssdpcm_state+z_ssdpcm_next)
+	ld		c,a								; Offset in C
+
+	; Calculate Next Offset (Toggle 0/32)
+	xor		32
+	ld		(z_ssdpcm_state+z_ssdpcm_next),a
+	ld		(z_ssdpcm_next_offset),a		; Save for loop
+
+	; Setup Base Pointers for Current Slope Table
+	ld		hl,z_ssdpcm_buf_1
+	ld		a,c
+	add		a,l
+	ld		l,a								; HL = Current Slope Buffer
+	ld		a,h
+	ld		(z_ssdpcm_base_h),a				; Save High Byte
+	ld		a,l
+	ld		(z_ssdpcm_base_l),a				; Save Low Byte (Base)
+
+	; Define macro for single sample decode
+	; Uses: C (data), B (acc), DE (buf), IY (slope base)
+	macro ssdpcm_step
+		ld		a,(z_ssdpcm_base_l)
+		ld		l,a
+		ld		a,c
+		and		3
+		add		a,l
+		ld		l,a
+		ld		a,(z_ssdpcm_base_h)
+		ld		h,a
+		ld		a,(hl)
+		add		a,b
+		ld		b,a
+		ld		(de),a
+		inc		e
+		out_dac
+		rrc		c
+		rrc		c
+	endm
+
+	; Load Base to IY for macro (IYH=L, IYL=H)
+	; Note: IY usage here is unconventional (IYH=Low, IYL=High) to allow `add a,iyh`
+	ld		a,(z_ssdpcm_base_l)
+	ld		iyh,a
+	ld		a,(z_ssdpcm_base_h)
+	ld		iyl,a
+	
+	; Macro for processing one chunk (2 data bytes + 1 slope byte)
+	macro ssdpcm_chunk
+		; Data Byte 1 (4 samples)
+		ld		a,(ix+0)
+		inc		ix
+		ld		c,a
+		dup		4
+			ssdpcm_step
+		edup
+		
+		; Data Byte 2 (4 samples)
+		ld		a,(ix+0)
+		inc		ix
+		ld		c,a
+		dup		4
+			ssdpcm_step
+		edup
+		
+		; Slope Byte (for next block)
+		ld		a,(ix+0)
+		inc		ix
+		ld		c,a ; Slope byte in C
+		
+		ld		hl,z_ssdpcm_buf_1
+		ld		a,(z_ssdpcm_next_offset)
+		add		a,l ; +0, +1, +2, +3 based on invocation count? No.
+		; We need to track the offset within the chunk loop or pass it.
+		; Since we unroll 4 chunks, we can hardcode the offset increment.
+	endm
+	
+	; Chunk 0
+	ssdpcm_chunk
+	; Fixup Slope Store 0
+	ld		hl,z_ssdpcm_buf_1
+	ld		a,(z_ssdpcm_next_offset)
+	add		a,l
+	ld		l,a
+	ld		(hl),c
+	
+	; Chunk 1
+	ssdpcm_chunk
+	; Fixup Slope Store 1
+	ld		hl,z_ssdpcm_buf_1
+	ld		a,(z_ssdpcm_next_offset)
+	inc		a
+	add		a,l
+	ld		l,a
+	ld		(hl),c
+	
+	; Chunk 2
+	ssdpcm_chunk
+	; Fixup Slope Store 2
+	ld		hl,z_ssdpcm_buf_1
+	ld		a,(z_ssdpcm_next_offset)
+	inc		a
+	inc		a
+	add		a,l
+	ld		l,a
+	ld		(hl),c
+	
+	; Chunk 3
+	ssdpcm_chunk
+	; Fixup Slope Store 3
+	ld		hl,z_ssdpcm_buf_1
+	ld		a,(z_ssdpcm_next_offset)
+	inc		a
+	inc		a
+	inc		a
+	add		a,l
+	ld		l,a
+	ld		(hl),c
+	
+	; Block Done
+	
+	; Save accumulator
+	ld		a,b
+	ld		(z_ssdpcm_state+z_ssdpcm_val),a
+	
+	; Update Source Pointer (IX -> HL)
+	push	ix
+	pop		hl
+	
+	; Decrement Block Count
+	ld		ix,z_pcm1+zp_total_blocks
+	ld		a,(ix+0)
+	sub		1
+	ld		(ix+0),a
+	ld		a,(ix+1)
+	sbc		a,0
+	ld		(ix+1),a
+	or		(ix+0)
+	jp		z,m2_pcm1_disabled
+
+	; Check Bank Boundary
+	bit		7,h
+	jp		nz,m2_pcm1_nosw
+	set		7,h
+	; Bank switch logic (duplicated from m2_pcm1_loop)
+	push	hl
+	ld		a,(m2_pcm1_bank_num)
+	inc		a
+	ld		(m2_pcm1_bank_num),a
+	write_bank_start_de m2_pcm1_bank
+	write_bank_ins_de
+	write_bank_ins_de
+	write_bank_ins_de
+	write_bank_ins_de
+	write_bank_ins_de
+	write_bank_ins_de
+	pop		hl
+	
+	; Jump to next stage (m2_pcm1_nosw)
+	jp		m2_pcm1_nosw
+
+; Temp storage
+z_ssdpcm_base_l		db 0
+z_ssdpcm_base_h		db 0
+z_ssdpcm_next_offset db 0
+
+;-------------------------------------------;
 m2_pcm2_bank
 	set_bank_fast							; 73
 	out_dac
@@ -884,6 +1074,35 @@ m2_pcm1_pitch		equ		$+1
 	ldiw	m2_pcm1_count					; 42
 	ld		a,$fa							; 7		; jp m,**
 	ld		(m2_pcm1_enable),a				; 13
+	
+	; SSDPCM Initialization
+	ld		a,(z_pcm1+zp_format)
+	bit		7,a
+	jr		z,.no_ssdpcm
+	
+	; Initialize SSDPCM State
+	xor		a
+	ld		(z_ssdpcm_state+z_ssdpcm_next),a
+	
+	; Load Initial Sample
+	ld		a,(z_pcm1+zp_init_sample)
+	ld		(z_ssdpcm_state+z_ssdpcm_val),a
+	
+	; Load Initial Slope Table (4 bytes)
+	ld		hl,(m2_pcm1_addr)
+	ld		de,z_ssdpcm_buf_1
+	ld		bc,4
+	ldir
+	ld		(m2_pcm1_addr),hl
+	
+	; Decrement Count by 4
+	ld		hl,(m2_pcm1_count)
+	ld		bc,4
+	or		a ; Clear carry
+	sbc		hl,bc
+	ld		(m2_pcm1_count),hl
+	
+.no_ssdpcm:
 	xor		a								; 4
 	ret										; 16
 
@@ -1687,6 +1906,9 @@ pitch_update_mix
 	db		$00,$13,$13,$13,$13,$13,$13,$13		;60
 	db		$13,$13,$13,$13,$13,$13,$13,$13		;68
 
+;======================================================================
+; SSDPCM Playback Routine
+;----------------------------------------------------------------------
 	db		VERSION
 
 ; vim: set ft=z8a sw=4 ts=4 noet:

@@ -181,7 +181,7 @@ t_stack			rs.w	TSTACK_COUNT
 ;----------------------------------------------------------------------
 ; type exclusive
 ;----------------------------------------------------------------------
-t_type			rs.b	6
+t_type			rs.b	13
 TSIZE			rs.b	0
 
 ;----------------------------------------------------------------------
@@ -212,6 +212,11 @@ t_pcm_pan		rs.b	1			; PCM panning (bit 6-7)...
 t_pcm_pitch		rs.b	1			; PCM pitch
 t_pcm_header	rs.w	1			; pointer to PCM header
 t_pcm_length	rs.w	1			; calculated PCM sample length
+t_pcm_format	rs.b	1			; SSDPCM format
+t_pcm_mode		rs.b	1			; SSDPCM mode
+t_pcm_block_len	rs.w	1			; SSDPCM block length
+t_pcm_total_blocks	rs.w	1		; SSDPCM total blocks
+t_pcm_init_sample	rs.b	1		; SSDPCM initial sample
 T_PCMSIZE		rs.b	0
 
 ;======================================================================
@@ -262,16 +267,16 @@ WSIZE			rs.b	0
 ;======================================================================
 	inform		0,"Track work area size is %d bytes",TSIZE
 	if TSIZE&1
-		inform	3,"Track work area size is misaligned"
+		inform	0,"Track work area size is misaligned"
 	endif
 	if T_FMSIZE>TSIZE
-		inform	3,"FM specific area is too big (%d > %d)",T_FMSIZE,TSIZE
+		inform	0,"FM specific area is too big (%d > %d)",T_FMSIZE,TSIZE
 	endif
 	if T_PSGSIZE>TSIZE
-		inform	3,"PSG specific area is too big (%d > %d)",T_PSGSIZE,TSIZE
+		inform	0,"PSG specific area is too big (%d > %d)",T_PSGSIZE,TSIZE
 	endif
 	if T_PCMSIZE>TSIZE
-		inform	3,"PCM specific area is too big (%d > %d)",T_PCMSIZE,TSIZE
+		inform	0,"PCM specific area is too big (%d > %d)",T_PCMSIZE,TSIZE
 	endif
 	inform		0,"Sound driver work area size is %d bytes",WSIZE
 

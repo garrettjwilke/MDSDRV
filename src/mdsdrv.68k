@@ -1570,9 +1570,33 @@ mds_update_seq
 	movea.w	0(@tbase,@cmd),tmpa0			; instr address
 	move.w	tmpa0,t_pcm_header(twork)
 	adda.l	a_sdtop,tmpa0
+	
+	; Check format flag
+	move.b	(tmpa0),d1
+	btst	#7,d1					; Bit 7 = SSDPCM flag
+	beq.s	@pcm_raw				; Branch if raw PCM
+
+	; SSDPCM path
+	move.b	d1,t_pcm_format(twork)	; Store format + mode
+	andi.b	#$7f,d1					; Clear flag bit
+	move.b	d1,t_pcm_mode(twork)	; Store mode
+
+	; Read SSDPCM-specific fields
+	move.w	2(tmpa0),t_pcm_block_len(twork)	; Block length
+	move.w	4(tmpa0),t_pcm_total_blocks(twork)
+	move.b	6(tmpa0),t_pcm_init_sample(twork)
+
+	; Calculate compressed length
+	move.w	10(tmpa0),t_pcm_length(twork)
+	bra.s	@pcm_common
+
+@pcm_raw
+	clr.b	t_pcm_format(twork)			; Clear SSDPCM format
 	move.b	(tmpa0),t_pcm_pitch(twork)		; read sample rate
 	addq	#6,tmpa0
 	move.w	(tmpa0),t_pcm_length(twork)
+
+@pcm_common
 	ori.l	#((1<<(cf+cf_pcm_control))|(1<<(nf+nf_pcm_header))|(1<<(nf+nf_pcm_pitch))),flag
 	bra.w	@next_command
 
@@ -3125,11 +3149,87 @@ mds_pcm_key_on
 	bset	#cf+cf_key_on,flag
 	andi.l	#~((1<<(nf+nf_vol))|(1<<(nf+nf_slur))),flag
 	bclr	#nf+nf_pcm_header,flag
-	beq.s	@no_update_header
+	beq.w	@no_update_header
 
 	move.l	a_sdtop,tmpa0
 	adda.w	t_pcm_header(twork),tmpa0
+	
+	; Check for SSDPCM (bit 31 of flags at offset 28)
+	; 68k big endian: offset 28 is MSB byte of flags.
+	; If bit 31 is set, then offset 31 (LSB byte) bit 7 is set?
+	; No.
+	; Little endian on disk: [Byte0] [Byte1] [Byte2] [Byte3]
+	; Byte3 has bit 7 set if bit 31 of uint32 is set.
+	; 68k reads long: MSB=Byte0 ... LSB=Byte3.
+	; So bit 31 corresponds to Byte0's bit 7? No.
+	; Value = (Byte3 << 24) | (Byte2 << 16) | ... ?
+	; No, 68k big endian read: MSB is at lowest address.
+	; So it reads [Byte0][Byte1][Byte2][Byte3].
+	; Value = (Byte0 << 24) | ... | Byte3.
+	; But `write_le32` writes LSB first.
+	; Disk: [LSB] ... [MSB].
+	; So offset 28 is LSB (bits 0-7).
+	; Offset 31 is MSB (bits 24-31).
+	; 68k reads [28][29][30][31].
+	; Value = (LSB << 24) | ... | MSB.
+	; So bit 31 of the 68k register comes from LSB (Byte0) bit 7?
+	; Yes.
+	; But I set bit 31 of the *original value*.
+	; `current_flags |= 0x80000000;`
+	; In LE, this bit is in Byte3 (offset 31).
+	; So offset 31 has bit 7 set.
+	; 68k reads [28]...[31].
+	; Value = [28]<<24 | ... | [31].
+	; So the bit is in bit 7 of the 68k register (lowest byte).
+	; So `tst.b d1` or checking bit 7 would work?
+	; Wait. `move.l` loads the whole thing.
+	; `[28] [29] [30] [31]`
+	; `LSB  ...  ...  MSB`
+	; Register D1: `LSB ... MSB`
+	; The bit is in MSB (offset 31).
+	; So it is in bits 0-7 of D1.
+	; So `btst #7,d1` works.
+	
+	; Set zp_format based on t_pcm_format
+	mds_z80_wait_req
+	tst.b	t_pcm_format(twork)
+	bpl.s	@standard_pcm
+	
+	move.b	#$80,zp_format(zram,d0)
+	mds_z80_start
+	bra.s	@read_addr_logic
+	
+@standard_pcm
+	clr.b	zp_format(zram,d0)
+	mds_z80_start
+
+@read_addr_logic
+	tst.b	t_pcm_format(twork)
+	beq.s	@read_raw_addr
+	
+	; SSDPCM parameters
+	mds_z80_wait_req
+	move.b	t_pcm_mode(twork),zp_mode(zram,d0)
+	move.w	t_pcm_block_len(twork),d2
+	move.b	d2,zp_block_len(zram,d0)
+	lsr.w	#8,d2
+	move.b	d2,zp_block_len+1(zram,d0)
+	move.b	t_pcm_init_sample(twork),zp_init_sample(zram,d0)
+  
+  move.w	t_pcm_total_blocks(twork),d2
+  move.b	d2,zp_total_blocks(zram,d0)
+  lsr.w	#8,d2
+  move.b	d2,zp_total_blocks+1(zram,d0)
+  
+  mds_z80_start
+	
+	move.l	12(tmpa0),d1
+	bra.s	@process_addr
+	
+@read_raw_addr
 	move.l	(tmpa0),d1
+
+@process_addr
 	add.l	d1,d1
 	lsr.w	d1
 	ori.w	#$8000,d1
