@@ -813,6 +813,14 @@ mds_handle_request
 	move.w	@zero,t_stack_pos(twork)		; stack_pos & counter
 	move.w	#$0b0b,t_rest_time(twork)		; default time (-1)
 	move.b	@zero,t_stack_pos(twork)
+	
+	; Initialize PCM fields to ensure they're cleared
+	move.w	@zero,t_pcm_header(twork)		; Clear PCM header pointer (word)
+	move.b	@zero,t_pcm_format(twork)		; Clear PCM format (byte)
+	move.b	@zero,t_pcm_mode(twork)			; Clear PCM mode (byte)
+	move.w	@zero,t_pcm_block_len(twork)	; Clear block length (word)
+	move.w	@zero,t_pcm_total_blocks(twork)	; Clear total blocks (word)
+	move.b	@zero,t_pcm_init_sample(twork)	; Clear init sample (byte)
 
 	cmp.b	#ct_psg,@reqdata
 	bcs.s	@not_psg
@@ -1585,6 +1593,11 @@ mds_update_seq
 	move.w	2(tmpa0),t_pcm_block_len(twork)	; Block length
 	move.w	4(tmpa0),t_pcm_total_blocks(twork)
 	move.b	6(tmpa0),t_pcm_init_sample(twork)
+
+	; Extract pitch from offset 12 (upper byte)
+	move.l	12(tmpa0),d1			; Read pitch | address
+	rol.l	#8,d1					; Rotate to get pitch in lower byte
+	move.b	d1,t_pcm_pitch(twork)	; Store pitch
 
 	; Calculate compressed length
 	move.w	10(tmpa0),t_pcm_length(twork)
@@ -3190,57 +3203,30 @@ mds_pcm_key_on
 	; So it is in bits 0-7 of D1.
 	; So `btst #7,d1` works.
 	
-	; Set zp_format based on t_pcm_format
-	mds_z80_wait_req
-	tst.b	t_pcm_format(twork)
-	bpl.s	@standard_pcm
-	
-	move.b	#$80,zp_format(zram,d0)
-	mds_z80_start
-	bra.s	@read_addr_logic
-	
-@standard_pcm
-	clr.b	zp_format(zram,d0)
-	mds_z80_start
-
-@read_addr_logic
-	tst.b	t_pcm_format(twork)
-	beq.s	@read_raw_addr
-	
-	; SSDPCM parameters
-	mds_z80_wait_req
-	move.b	t_pcm_mode(twork),zp_mode(zram,d0)
-	move.w	t_pcm_block_len(twork),d2
-	move.b	d2,zp_block_len(zram,d0)
-	lsr.w	#8,d2
-	move.b	d2,zp_block_len+1(zram,d0)
-	move.b	t_pcm_init_sample(twork),zp_init_sample(zram,d0)
-  
-  move.w	t_pcm_total_blocks(twork),d2
-  move.b	d2,zp_total_blocks(zram,d0)
-  lsr.w	#8,d2
-  move.b	d2,zp_total_blocks+1(zram,d0)
-  
-  mds_z80_start
-	
-	move.l	12(tmpa0),d1
-	bra.s	@process_addr
-	
-@read_raw_addr
+	; Read PCM address from header
+	; Header format: [pitch][addr_high][addr_mid][addr_low] at offset 0
 	move.l	(tmpa0),d1
-
-@process_addr
-	add.l	d1,d1
-	lsr.w	d1
-	ori.w	#$8000,d1
+	andi.l	#$00ffffff,d1			; Mask out pitch byte, keep 24-bit address
+	
+	; Convert byte address to word address
+	add.l	d1,d1					; Multiply by 2 (shift left 1)
+	lsr.w	#1,d1					; Divide lower word by 2
+	ori.w	#$8000,d1				; Set bit 15 (Z80 address space)
+	
+	; Extract bank from upper byte after conversion
+	move.l	d1,d2					; Save address
+	swap	d2						; Get upper word into lower word
+	lsr.w	#8,d2					; Shift to get upper byte
+	move.b	d2,d2					; Extract bank byte
+	add.b	w_pcm_bank(work),d2		; Add base bank
+	
+	; Write address and bank to Z80 RAM (d1 still has the address)
 	lea		zp_addr+2(zram,d0),tmpa0
-	move.w	d1,-(sp)						; push a word
+	move.w	d1,-(sp)				; Push address word
 	mds_z80_wait_req
-	move.b	(sp)+,-(tmpa0)					; pop high byte
-	move.b	d1,-(tmpa0)						; low byte
-	swap	d1
-	add.b	w_pcm_bank(work),d1
-	move.b	d1,-(tmpa0)
+	move.b	(sp)+,-(tmpa0)			; Write address high byte
+	move.b	d1,-(tmpa0)				; Write address low byte  
+	move.b	d2,-(tmpa0)				; Write bank byte
 	mds_z80_start
 
 @no_update_header

@@ -474,9 +474,10 @@ m2_loop
 ; replace with "jp m" to start playback
 m2_pcm1_enable		equ		$
 	jp		m2_pcm1_disabled				; 10 (-> 31)
-	ld		a,(z_pcm1+zp_format)
-	bit		7,a
-	jp		nz,m2_pcm1_ssdpcm_entry
+	; TEMPORARILY DISABLED: SSDPCM check - always use raw PCM path
+	; ld		a,(z_pcm1+zp_format)
+	; cp		$80							; Check if exactly 0x80 (SSDPCM)
+	; jp		z,m2_pcm1_ssdpcm_entry		; Only jump if explicitly SSDPCM
 	ld		a,(z_pcm1+zp_vol)
 	ld		b,a								; 4
 	ld		d,iyh							; 8
@@ -597,6 +598,24 @@ m2_pcm1_ssdpcm_entry
 	ld		(z_ssdpcm_state+z_ssdpcm_next),a
 	ld		(z_ssdpcm_next_offset),a		; Save for loop
 
+	; Load Slope Table for this block (4 bytes for ss2 mode)
+	; Slope table is at the start of each block
+	; IX points to ROM data (source), need to copy to slope buffer (destination)
+	push	bc								; Save C (offset)
+	push	ix								; Save IX (source pointer)
+	pop		hl								; HL = source (ROM data)
+	ld		de,z_ssdpcm_buf_1
+	pop		bc								; Restore BC (C = offset)
+	push	bc								; Save again
+	ld		a,c
+	add		a,e
+	ld		e,a								; DE = Current Slope Buffer (destination)
+	ld		bc,4
+	ldir									; Copy 4 slope bytes from (HL) to (DE)
+	push	hl								; Save updated source pointer (after slope table)
+	pop		ix								; IX now points after slope table (start of codewords)
+	pop		bc								; Restore BC (C = offset)
+	
 	; Setup Base Pointers for Current Slope Table
 	ld		hl,z_ssdpcm_buf_1
 	ld		a,c
@@ -635,7 +654,7 @@ m2_pcm1_ssdpcm_entry
 	ld		a,(z_ssdpcm_base_h)
 	ld		iyl,a
 	
-	; Macro for processing one chunk (2 data bytes + 1 slope byte)
+	; Macro for processing one chunk (2 data bytes = 8 samples)
 	macro ssdpcm_chunk
 		; Data Byte 1 (4 samples)
 		ld		a,(ix+0)
@@ -652,60 +671,13 @@ m2_pcm1_ssdpcm_entry
 		dup		4
 			ssdpcm_step
 		edup
-		
-		; Slope Byte (for next block)
-		ld		a,(ix+0)
-		inc		ix
-		ld		c,a ; Slope byte in C
-		
-		ld		hl,z_ssdpcm_buf_1
-		ld		a,(z_ssdpcm_next_offset)
-		add		a,l ; +0, +1, +2, +3 based on invocation count? No.
-		; We need to track the offset within the chunk loop or pass it.
-		; Since we unroll 4 chunks, we can hardcode the offset increment.
 	endm
 	
-	; Chunk 0
-	ssdpcm_chunk
-	; Fixup Slope Store 0
-	ld		hl,z_ssdpcm_buf_1
-	ld		a,(z_ssdpcm_next_offset)
-	add		a,l
-	ld		l,a
-	ld		(hl),c
-	
-	; Chunk 1
-	ssdpcm_chunk
-	; Fixup Slope Store 1
-	ld		hl,z_ssdpcm_buf_1
-	ld		a,(z_ssdpcm_next_offset)
-	inc		a
-	add		a,l
-	ld		l,a
-	ld		(hl),c
-	
-	; Chunk 2
-	ssdpcm_chunk
-	; Fixup Slope Store 2
-	ld		hl,z_ssdpcm_buf_1
-	ld		a,(z_ssdpcm_next_offset)
-	inc		a
-	inc		a
-	add		a,l
-	ld		l,a
-	ld		(hl),c
-	
-	; Chunk 3
-	ssdpcm_chunk
-	; Fixup Slope Store 3
-	ld		hl,z_ssdpcm_buf_1
-	ld		a,(z_ssdpcm_next_offset)
-	inc		a
-	inc		a
-	inc		a
-	add		a,l
-	ld		l,a
-	ld		(hl),c
+	; Process 4 chunks = 32 samples (one block for ss2 mode with block_len=32)
+	ssdpcm_chunk	; Chunk 0: 8 samples
+	ssdpcm_chunk	; Chunk 1: 8 samples
+	ssdpcm_chunk	; Chunk 2: 8 samples
+	ssdpcm_chunk	; Chunk 3: 8 samples
 	
 	; Block Done
 	
@@ -730,7 +702,7 @@ m2_pcm1_ssdpcm_entry
 
 	; Check Bank Boundary
 	bit		7,h
-	jp		nz,m2_pcm1_nosw
+	jp		nz,.no_bank_switch
 	set		7,h
 	; Bank switch logic (duplicated from m2_pcm1_loop)
 	push	hl
@@ -746,8 +718,22 @@ m2_pcm1_ssdpcm_entry
 	write_bank_ins_de
 	pop		hl
 	
-	; Jump to next stage (m2_pcm1_nosw)
-	jp		m2_pcm1_nosw
+.no_bank_switch
+	; Save updated address (IX points to start of next block)
+	push	ix
+	pop		hl
+	ld		(m2_pcm1_addr),hl
+	
+	; Decrement sample count (one block = block_len samples)
+	ld		hl,(m2_pcm1_count)
+	ld		de,(z_pcm1+zp_block_len)
+	or		a					; Clear carry
+	sbc		hl,de
+	ld		(m2_pcm1_count),hl
+	jp		m,m2_pcm1_disabled	; Jump if count went negative
+	
+	; Loop back to process next block
+	jp		m2_pcm1_ssdpcm_entry
 
 ; Temp storage
 z_ssdpcm_base_l		db 0
@@ -1076,9 +1062,10 @@ m2_pcm1_pitch		equ		$+1
 	ld		(m2_pcm1_enable),a				; 13
 	
 	; SSDPCM Initialization
+	; Check zp_format - if uninitialized (garbage), default to raw PCM
 	ld		a,(z_pcm1+zp_format)
-	bit		7,a
-	jr		z,.no_ssdpcm
+	cp		$80								; Check if exactly 0x80 (SSDPCM)
+	jr		nz,.no_ssdpcm					; If not 0x80, treat as raw PCM
 	
 	; Initialize SSDPCM State
 	xor		a
