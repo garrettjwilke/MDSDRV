@@ -172,6 +172,7 @@ DEFAULT_MODE	equ		2
 	; hl = mixed output buffer
 	; de = sample position
 	; b  = volume table offset
+	; NOTE: jp po can't be replaced with jr po (jr only supports nz/z/nc/c conditions)
 	macro	read_mix_one					; = 48 (59 worst case)
 		ld		a,(de)						;7
 		inc		de							;6
