@@ -521,7 +521,7 @@ m2_pcm1_pit7		equ		$+2
 	inc_read_one							; 31
 
 	dec		ixl								; 8
-	jp		nz, m2_pcm1_loop				; 10 (-> 107+31 = 138)
+	jr		nz, m2_pcm1_loop				; 7 (was 10, saves 3 cycles per iteration)
 
 ;-------------------------------------------; = 107 + 28 = 135
 
@@ -632,7 +632,7 @@ m2_pcm2_pit7		equ		$+2
 	nop										; 4
 	nop										; 4
 	dec		ixl								; 8
-	jp		nz,m2_pcm2_loop					; 10 (->82+63 = 145 (!))
+	jp		nz,m2_pcm2_loop					; 10 (->82+63 = 145 (!)) - can't use jr, target out of range
 
 
 ;-------------------------------------------; = 81 + 49 = 130
@@ -1049,7 +1049,7 @@ m3_pcm3_pit7		equ		$+2
 ; we do this only for the last PCM channel.
 m3_pcm3_pitx
 	dec		ixl								; 8
-	jp		nz,m3_pcm3_loop					; 10 (-> 173 + 31 = 204)
+	jr		nz,m3_pcm3_loop					; 7 (was 10, saves 3 cycles per iteration)
 
 ;-------------------------------------------; = 173 + 22 = 195
 	nop										; 4
@@ -1139,7 +1139,7 @@ m3_pcm1_pit4		equ		$
 
 ;-------------------------------------------; = 170 + 18 = 188
 	dec		ixl								; 8
-	jp		z,m3_pcm1_exit					; 10 (->188)
+	jr		z,m3_pcm1_exit					; 7 (was 10, saves 3 cycles on exit)
 
 ;-------------------------------------------; = 188 + 15 = 203
 ;	nop										; 4
@@ -1228,7 +1228,7 @@ m3_pcm2_pit4		equ		$
 
 ;-------------------------------------------; = 170 + 18 = 188
 	dec		ixl								; 8
-	jp		z,m3_pcm2_exit					; 10 (->188)
+	jr		z,m3_pcm2_exit					; 7 (was 10, saves 3 cycles on exit)
 
 ;-------------------------------------------; = 188 + 15 = 203
 ;	nop										; 4  (NB: ROM wait compen.)
