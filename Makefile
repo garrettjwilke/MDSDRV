@@ -38,8 +38,6 @@ clownassembler/clownassembler_asm68k:
 
 clean:
 	cd out; rm -f mdssub.bin mdssub.zx0 mdsdrv.bin
-	$(MAKE) -C salvador clean
-	$(MAKE) -C sjasmplus clean
 
 mdsdrv: pre-build tools-build out/mdsdrv.bin
 
