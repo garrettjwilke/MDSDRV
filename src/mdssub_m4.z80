@@ -1,0 +1,342 @@
+;======================================================================
+; PCM mode 4 - live-DAC SSDPCM (ss2) on PCM1 @ ~17.5 kHz
+;----------------------------------------------------------------------
+; Decode itself is cheap (2-bit deltas). The previous call/push/vtab
+; emit path burned ~350 cyc/sample (~10 kHz) and sounded crushed.
+;
+; This matches the working ssdpcm live-DAC shape:
+;   - EXX HL = ROM pointer (inline fetch, no IX call)
+;   - Unrolled 4 samples / codeword, data-only $4001 writes
+;   - Delta table at $1f00 so `ld l,code` stays in-page
+;   - Rate = Z80 period between $4001 writes (~204 cyc @ 17.5 kHz)
+;   - m4_rate_pad_n trims once per group (lower = faster/sharper)
+;
+; Volume: unsigned DAC = signed_acc xor $80 (full scale). vtab later.
+; Pitch: always consume 4 codes/byte (pitch 8). Hold path TBD.
+; PCM2 drums: not mixed yet (ROM bank flips stall the hot path).
+;======================================================================
+
+; Group body (no drums) ≈ 463 cyc / 4 samples ≈ 31 kHz before pad.
+; Target 17500 Hz ≈ 818 cyc/group → pad ≈ 355 cyc → N=22 (16N+2).
+m4_rate_pad_n	equ		22
+
+; Page-aligned delta table (ring buffer unused in mode 4).
+m4_delta		equ		$1f00
+
+m4_init
+	ld		hl,m4_vbl
+	ld		(vbl_hook),hl
+
+	ld		a,$2b
+	ld		($4000),a
+	ld		a,$80
+	ld		($4001),a
+
+	ld		a,$b6							; FM6 pan center
+	ld		($4002),a
+	ld		a,$c0
+	ld		($4003),a
+	ld		a,$b4
+	ld		($4002),a
+	ld		a,$c0
+	ld		($4003),a
+
+	ld		a,$2a
+	ld		($4000),a
+	ld		a,$80
+	ld		($4001),a
+	ld		d,a								; VBL hold sample
+
+	xor		a
+	ld		(z_busy),a
+	ld		(z_sp_active),a
+	ld		a,$80
+	ld		(z_pcm1_vol),a
+	ld		(z_pcm2_vol),a
+	ld		(z_pcm3_vol),a
+
+	ld		a,PCM_DEFAULT_BUFFER			; keep VBL on m4_vbl hold
+	ld		(z_load),a
+	ld		hl,z_mode_change
+
+m4_key_on
+	xor		a
+	ld		(hl),a
+	ld		l,low(z_pcm1_key_on)
+	cp		(hl)
+	call	nz,m4_pcm1_key_on
+	xor		a
+	ld		l,low(z_pcm2_key_on)
+	cp		(hl)
+	jr		z,m4_loop
+	ld		(hl),a							; clear unused PCM2 key-on
+
+m4_loop
+	ei
+	ld		a,(z_sp_active)
+	or		a
+	jp		nz,m4_stream
+
+m4_idle
+	ld		a,$2a
+	ld		($4000),a
+	ld		a,d
+	ld		($4001),a
+	ld		hl,z_mode_change
+	ld		a,(hl)
+	or		a
+	jp		nz,main_loop
+	inc		l
+	ld		a,(hl)
+	or		a
+	jp		nz,m4_key_on
+	jr		m4_idle
+
+;----------------------------------------------------------------------
+m4_pcm1_key_on
+	ld		(hl),a
+	ld		a,(z_pcm1_bank)
+	ld		(z_sp_bank),a
+	ld		(z_sp_start_bank),a
+	call	m4_set_bank
+	ld		ix,(z_pcm1_addr)
+	ld		(z_sp_start_addr),ix
+	ld		a,(ix+0)						; initial unsigned sample
+	inc		ix
+	ld		d,a
+	xor		$80
+	ld		(z_sp_acc),a
+	ld		(z_sp_addr),ix
+	ld		hl,(z_pcm1_count)
+	ld		a,h
+	or		l
+	jr		nz,.hb
+	inc		l
+.hb
+	ld		(z_sp_blocks),hl
+	ld		(z_sp_reload),hl
+	xor		a
+	ld		(z_sp_bits),a
+	ld		(z_sp_words),a
+	ld		(z_sp_code),a
+	inc		a
+	ld		(z_sp_active),a
+	ret
+
+;----------------------------------------------------------------------
+m4_stream
+	ld		a,(z_sp_bank)
+	call	m4_set_bank
+
+	ld		a,$2b
+	ld		($4000),a
+	ld		a,$80
+	ld		($4001),a
+	ld		a,$2a
+	ld		($4000),a
+
+	; EXX HL = ROM pointer; MAIN E = signed acc
+	exx
+	ld		hl,(z_sp_addr)
+	exx
+	ld		a,(z_sp_acc)
+	ld		e,a
+
+m4_next_block
+	ld		hl,z_mode_change
+	ld		a,(hl)
+	or		a
+	jp		nz,m4_save_exit
+	inc		l
+	ld		a,(hl)
+	or		a
+	jp		nz,m4_save_rekey
+
+	ld		hl,(z_sp_blocks)
+	ld		a,h
+	or		l
+	jp		z,m4_stream_end
+	dec		hl
+	ld		(z_sp_blocks),hl
+
+	; block header: two step sizes -> +/- table at m4_delta
+	exx
+	ld		a,(hl)
+	inc		hl
+	bit		7,h
+	call	z,m4_rom_bank_next
+	exx
+	ld		(m4_delta+0),a
+	neg
+	ld		(m4_delta+2),a
+	exx
+	ld		a,(hl)
+	inc		hl
+	bit		7,h
+	call	z,m4_rom_bank_next
+	exx
+	ld		(m4_delta+1),a
+	neg
+	ld		(m4_delta+3),a
+
+	ld		b,32							; 32 codewords / block
+
+;----------------------------------------------------------------------
+; Hot path: ~70 cyc decode+DAC + pad/4. No call/push per sample.
+;----------------------------------------------------------------------
+m4_group
+	ld		a,(z_pcm1_key_on)
+	or		a
+	jp		nz,m4_save_rekey
+	ld		a,(z_mode_change)
+	or		a
+	jp		nz,m4_save_exit
+
+	exx
+	ld		a,(hl)
+	inc		hl
+	bit		7,h
+	jr		nz,.nobank
+	push	af
+	call	m4_rom_bank_next
+	pop		af
+.nobank
+	exx
+	ld		c,a								; 4 x 2-bit codes
+
+	ld		a,$2a
+	ld		($4000),a
+	ld		a,m4_rate_pad_n
+.pad
+	dec		a
+	jr		nz,.pad
+
+	ld		h,high(m4_delta)
+
+	; ---- sample 0
+	rlc		c
+	rlc		c
+	ld		a,c
+	and		3
+	ld		l,a
+	ld		a,(hl)
+	add		a,e
+	ld		e,a
+	xor		$80
+	ld		d,a
+	ld		($4001),a
+
+	; ---- sample 1
+	rlc		c
+	rlc		c
+	ld		a,c
+	and		3
+	ld		l,a
+	ld		a,(hl)
+	add		a,e
+	ld		e,a
+	xor		$80
+	ld		d,a
+	ld		($4001),a
+
+	; ---- sample 2
+	rlc		c
+	rlc		c
+	ld		a,c
+	and		3
+	ld		l,a
+	ld		a,(hl)
+	add		a,e
+	ld		e,a
+	xor		$80
+	ld		d,a
+	ld		($4001),a
+
+	; ---- sample 3
+	rlc		c
+	rlc		c
+	ld		a,c
+	and		3
+	ld		l,a
+	ld		a,(hl)
+	add		a,e
+	ld		e,a
+	xor		$80
+	ld		d,a
+	ld		($4001),a
+
+	; debug: +4 emits (cheap group bump)
+	ld		hl,z_sp_dbg_lo
+	ld		a,(hl)
+	add		a,4
+	ld		(hl),a
+	jr		nc,.noc
+	inc		hl
+	inc		(hl)
+.noc
+	dec		b
+	jp		nz,m4_group
+	jp		m4_next_block
+
+;----------------------------------------------------------------------
+m4_stream_end
+	xor		a
+	ld		(z_sp_active),a
+	ld		a,$80
+	ld		(z_pcm1_vol),a
+	; fall through — save ROM ptr not needed when inactive
+	jp		m4_loop
+
+m4_save_rekey
+	exx
+	ld		(z_sp_addr),hl
+	exx
+	ld		a,e
+	ld		(z_sp_acc),a
+	ld		hl,z_key_on
+	jp		m4_key_on
+
+m4_save_exit
+	exx
+	ld		(z_sp_addr),hl
+	exx
+	ld		a,e
+	ld		(z_sp_acc),a
+	jp		main_loop
+
+; ROM bank crossed $8000..$ffff -> next bank, HL=$8000 (EXX active)
+m4_rom_bank_next
+	push	af
+	push	bc
+	push	de
+	ld		a,(z_sp_bank)
+	inc		a
+	ld		(z_sp_bank),a
+	call	m4_set_bank
+	ld		hl,$8000
+	pop		de
+	pop		bc
+	pop		af
+	ret
+
+m4_set_bank
+	ld		hl,$6000
+	dup		7
+		ld	(hl),a
+		rra
+	edup
+	ld		(hl),a
+	ld		(hl),h
+	ret
+
+m4_vbl
+	ld		a,$2a
+	ld		($4000),a
+	ld		a,d
+	ld		($4001),a
+	ld		a,PCM_DEFAULT_BUFFER
+	ld		(z_load),a
+	ld		a,(z_vbl_ack)
+	or		a
+	jr		z,m4_vbl
+	jp		vbl_ack_done

@@ -373,7 +373,7 @@ mode_table
 	jp		m0_init							; 01 - unused
 	jp		m2_init							; 02 - 2ch mixing @ 18k
 	jp		m3_init							; 03 - 3ch mixing @ 13k
-	jp		m0_init							; 04 - unused
+	jp		m4_init							; 04 - mode 2 with SSDPCM on PCM1
 	rst		$00								; 05 - reset
 
 ;======================================================================
@@ -434,6 +434,11 @@ burn_27
 ; Max 134 cycles between writes on average.
 ;----------------------------------------------------------------------
 m2_init
+	ld		hl,m2_pcm1_begin
+	ld		(m2_pcm1_dispatch),hl
+	ld		hl,m2_pcm1_key_on
+	ld		(m2_pcm1_key_dispatch),hl
+m2_common_init
 	ld		hl,m2_vbl
 	ld		(vbl_hook),hl
 	ld		a,$c3							; 7
@@ -448,7 +453,10 @@ m2_key_on
 	ld		(hl),a							; 7
 	ld		l,low(z_pcm1_key_on)			; 7
 	cp		(hl)							; 7
-	call	nz,m2_pcm1_key_on				; 17/10 (-> 111)
+	jr		z,m2_no_pcm1_key_on
+m2_pcm1_key_dispatch	equ		$+1
+	call	m2_pcm1_key_on					; 17 (-> 111)
+m2_no_pcm1_key_on
 
 ;-------------------------------------------; = 104 + ??
 	ld		l,low(z_pcm2_key_on)			; 7
@@ -469,6 +477,10 @@ m2_loop
 
 ;-------------------------------------------; = 51
 	ei										; 4
+m2_pcm1_dispatch	equ		$+1
+	jp		m2_pcm1_begin
+
+m2_pcm1_begin
 	ld		a,(z_pcm1_vol)					; 13
 	or		a								; 4
 ; replace with "jp m" to start playback
@@ -1686,6 +1698,8 @@ pitch_update_mix
 	db		$00,$13,$13,$13,$00,$13,$13,$13		;58
 	db		$00,$13,$13,$13,$13,$13,$13,$13		;60
 	db		$13,$13,$13,$13,$13,$13,$13,$13		;68
+
+	include	"mdssub_m4.z80"
 
 	db		VERSION
 

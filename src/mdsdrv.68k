@@ -1567,9 +1567,20 @@ mds_update_seq
 	movea.w	0(@tbase,@cmd),tmpa0			; instr address
 	move.w	tmpa0,t_pcm_header(twork)
 	adda.l	a_sdtop,tmpa0
-	move.b	(tmpa0),t_pcm_pitch(twork)		; read sample rate
+	; NOTE: only @cmd (d1) and @tempreg (d3) may be used as scratch
+	; here; @cmdlen (d2) drives the interpreter's position update.
+	move.b	(tmpa0),@cmd					; read sample rate / SSDPCM marker
+	move.b	@cmd,t_pcm_pitch(twork)
+	bpl.s	@cmd_pcm_raw_length
+	andi.b	#$0f,t_pcm_pitch(twork)			; SSDPCM uses mode-2 pitch 1..8
+	move.w	4(tmpa0),@cmd					; block count (stored little endian)
+	rol.w	#8,@cmd
+	move.w	@cmd,t_pcm_length(twork)
+	bra.s	@cmd_pcm_length_done
+@cmd_pcm_raw_length
 	addq	#6,tmpa0
 	move.w	(tmpa0),t_pcm_length(twork)
+@cmd_pcm_length_done
 	ori.l	#((1<<(cf+cf_pcm_control))|(1<<(nf+nf_pcm_header))|(1<<(nf+nf_pcm_pitch))),flag
 	bra.w	@next_command
 
@@ -3077,6 +3088,7 @@ mds_pcm_key_on
 
 	move.l	a_sdtop,tmpa0
 	adda.w	t_pcm_header(twork),tmpa0
+	move.b	(tmpa0),d2
 	move.l	(tmpa0),d1
 	add.l	d1,d1
 	lsr.w	d1
@@ -3089,11 +3101,22 @@ mds_pcm_key_on
 	swap	d1
 	add.b	w_pcm_bank(work),d1
 	move.b	d1,-(tmpa0)
+	btst	#7,d2
+	beq.s	@raw_header_done
+	move.l	a_sdtop,tmpa0
+	adda.w	t_pcm_header(twork),tmpa0
+	move.b	6(tmpa0),z_sp_loop(zram)
+@raw_header_done
 	mds_z80_start
 
 @no_update_header
 	bclr	#nf+nf_pcm_pitch,flag
 	beq.s	@no_update_length
+
+	move.l	a_sdtop,tmpa0
+	adda.w	t_pcm_header(twork),tmpa0
+	btst	#7,(tmpa0)
+	bne.s	@ssdpcm_length
 
 	clr.w	d1
 	move.b	t_pcm_pitch(twork),d1
@@ -3115,6 +3138,23 @@ mds_pcm_key_on
 	mds_z80_wait_req
 	move.b	d3,zp_pitch-zp_count(tmpa0)		; write pitch
 	move.b	d2,(tmpa0)+						; write count
+	move.b	(sp)+,(tmpa0)
+	mds_z80_start
+	bra.s	@no_update_length
+
+@ssdpcm_length
+	moveq	#0,d2
+	move.w	t_pcm_length(twork),d2			; exact ss2 block count
+	move.b	t_pcm_pitch(twork),d3
+	tst.b	d3
+	bne.s	@ssdpcm_pitch_ok
+	moveq	#8,d3
+@ssdpcm_pitch_ok
+	lea		zp_count(zram,d0),tmpa0
+	move.w	d2,-(sp)
+	mds_z80_wait_req
+	move.b	d3,zp_pitch-zp_count(tmpa0)
+	move.b	d2,(tmpa0)+
 	move.b	(sp)+,(tmpa0)
 	mds_z80_start
 
