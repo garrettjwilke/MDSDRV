@@ -34,7 +34,7 @@ mds_top
 ; ABI version string
 ;----------------------------------------------------------------------
 version_str
-	dc.b	"MDSDRV0.6 230612"
+	dc.b	"MDSDRV0.7 260724"
 version_str_end
 	dc.b	0
 	even
