@@ -96,6 +96,14 @@ DEFAULT_MODE	equ		2
 		rst		out_dac_slow
 	endm
 
+	; Mode 2 sample emit: data-only out_dac plus the ~31 cycles that the
+	; old 67-cycle out_dac used to burn, so fill/mix/silence keep the
+	; classic ~201-cycle spacing (rst $30 = burn_dac_pad = 33).
+	macro out_dac_m2						; = 69
+		rst		burn_dac_pad
+		out_dac
+	endm
+
 	; a = input register
 	macro set_bank							; = 101
 		ld		hl,$6000					;10
@@ -254,6 +262,15 @@ entry2
 	exx
 	jr		entry3
 
+	block	$30-$,0
+; 33-cycle burn via rst $30 (11 + 12 + 10). Restores the ~31 cycles
+; lost when out_dac shrank from 67 to 36, so mode 2 slots stay near
+; the classic ~201-cycle / 17.5 kHz spacing.
+burn_dac_pad
+	nop
+	nop
+	nop
+	ret
 	block	$38-$,0
 
 ;======================================================================
@@ -499,7 +516,7 @@ m2_pcm1_enable		equ		$
 	ld		b,a								; 4
 	ld		d,iyh							; 8
 	ld		e,iyl							; 8
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 101
 m2_pcm1_bank		equ		$
@@ -514,7 +531,7 @@ m2_pcm1_addr		equ		$+1
 m2_pcm1_loop
 m2_pcm1_pit0		equ		$+2
 	inc_read_one							; 31
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 128
 m2_pcm1_pit1		equ		$+2
@@ -529,7 +546,7 @@ m2_pcm1_pit3		equ		$+2
 m2_pcm1_pit4		equ		$+2
 	inc_read_one							; 31
 	inc		e								; 4
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 107
 
@@ -553,7 +570,7 @@ m2_pcm1_count	equ		$+1
 	bit		7,h								; 8
 	jp		nz,m2_pcm1_nosw					; 10 (-> 107 + 28 = 135)
 	set		7,h								; 8
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 56
 	push	hl								; 11
@@ -568,7 +585,7 @@ m2_pcm1_bank_num	equ		$+1
 	write_bank_ins_de						; 29
 	write_bank_ins_de						; 29
 	write_bank_ins_de						; 29
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 126
 	write_bank_ins_de						; 29
@@ -578,7 +595,7 @@ m2_pcm1_bank_num	equ		$+1
 	pop		hl								; 10
 
 m2_pcm1_nosw
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 55
 
@@ -589,7 +606,7 @@ m2_pcm1_nosw
 
 m2_pcm2_bank
 	set_bank_fast							; 73
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 72
 	ld		a,(z_pcm2_vol)					; 13
@@ -611,7 +628,7 @@ m2_pcm2_pit0		equ		$+2
 	inc_read_mix_one						; 52(63)
 	nop										; 4
 	nop										; 4
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 135
 m2_pcm2_pit1		equ		$+2
@@ -621,7 +638,7 @@ m2_pcm2_pit2		equ		$+2
 	inc_read_mix_one						; 52(63)
 
 	call	burn_31							; 31
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 131
 ; we could include an extra nop here, however we are at a
@@ -635,7 +652,7 @@ m2_pcm2_pit4		equ		$+2
 	inc_read_mix_one						; 52(63)
 
 	call	burn_27							; 27
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 136
 m2_pcm2_pit5		equ		$+2
@@ -645,7 +662,7 @@ m2_pcm2_pit6		equ		$+2
 	inc_read_mix_one						; 52(63)
 
 	call	burn_31							; 31
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 82
 m2_pcm2_pit7		equ		$+2
@@ -662,7 +679,7 @@ m2_pcm2_pit7		equ		$+2
 m2_pcm2_count		equ		$+1
 	ld		bc,$0200						; 10
 	dec_count m2_pcm2_count,m2_pcm2_enable	; 39
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; = 26
 	bit		7,d								;8
@@ -821,7 +838,7 @@ m2_pcm1_disabled
 
 .no_keyoff
 	ld		bc,$0201						; 10
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; 40
 	ld		a,$c3							; 7
@@ -838,7 +855,7 @@ m2_pcm1_disabled
 
 ;-------------------------------------------; 128 + 6 = 134
 	dec		bc								; 6
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; 18
 	ld		a,0								; 7
@@ -852,7 +869,7 @@ m2_pcm1_disabled
 		inc		e								; 4
 		ld		(de),a							; 7
 	edup
-	out_dac
+	out_dac_m2
 
 ;-------------------------------------------; 15
 	ld		a,0								; 7
