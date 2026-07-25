@@ -145,7 +145,10 @@ mds_z80_wait_fm		macro
 ;======================================================================
 ; start the Z80 again
 ;----------------------------------------------------------------------
+; Re-select DAC data port $2a so the Z80 out_dac hot path can write
+; $4001 only. Harmless on PCM-only bus releases.
 mds_z80_start		macro
+	move.b	#$2a,$4000(zram)
 	move.w	#$0000,(zreq)
 	endm
 

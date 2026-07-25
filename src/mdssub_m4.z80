@@ -15,19 +15,21 @@
 ; sustained drum part. Doubling the pass pays that overhead half as
 ; often, which buys 4 samples of headroom per pass at the same spacing.
 ;
-; Work budget per sample (the 67 cycle out_dac is on top of this):
+; Work budget per sample (the 36 cycle out_dac is on top of this):
 ;   SSDPCM decode and store       53
 ;   codeword fetch / bank check   13
 ;   fill loop counter              5
-;   PCM 2 mix                     42
+;   PCM 2 mix                     52 (63 worst when saturating)
 ;   pass overhead                 10
 ;
 ; The accumulator is held in signed form (raw xor $80). Adding deltas
 ; commutes with the +128 bias, so the decode loop stores straight to the
 ; buffer with no conversion step.
 ;
-; The mix does not clamp, so both sources must be encoded with headroom;
-; see convert_ssdpcm_assets.sh. Half scale each is the intended budget.
+; The mix hard-saturates on signed overflow (same as mode 2). Asset
+; headroom still helps loudness, but wrap clicks no longer occur.
+; out_dac is data-only ($4001); idle_init and mds_z80_start must leave
+; the YM latch on $2a so sample bytes never hit the DAC enable reg.
 ;
 ; ss2 stream layout: one initial sample byte, then 34 byte blocks of
 ; two step sizes followed by 32 codewords of four 2-bit deltas (MSB
@@ -54,19 +56,22 @@
 	endm
 
 ;----------------------------------------------------------------------
-; mix one PCM 2 sample into the buffer. No overflow check - see the
-; headroom note above.
+; mix one PCM 2 sample into the buffer with signed saturate.
 ;  b = volume table page, de = sample position, hl = buffer position
-	macro	m4_mix_one						; = 38
+	macro	m4_mix_one						; = 48 (59 worst case)
 		ld		a,(de)						;7
 		inc		de							;6
 		ld		c,a							;4
 		ld		a,(bc)						;7
 		add		a,(hl)						;7
+		jp		po,.no_ovf					;10
+		sbc		a,a							;4
+		xor		$7f							;7
+.no_ovf
 		ld		(hl),a						;7
 	endm
 
-	macro	m4_inc_mix_one					; = 42
+	macro	m4_inc_mix_one					; = 52 (63 worst case)
 		inc		l
 		m4_mix_one
 	endm
@@ -145,19 +150,23 @@ m4_pcm1_addr		equ		$+2
 ; 16 iterations of 4 samples, 2 DAC writes each
 ;----------------------------------------------------------------------
 m4_fill_loop
-;-------------------------------------------; = 135 (+21 on re-entry)
+;-------------------------------------------; = 162 (+21 on re-entry) + out_dac(36) = 198
+; data-only out_dac is ~30 cycles cheaper than the old emit; pad so fill
+; stays near the 201-cycle slot (otherwise rate swings with drum activity).
 	ld		c,(ix+0)						; 19
 	inc		ix								; 10
 	m4_sample								; 53
 	m4_sample								; 53
+	call	burn_27							; 27
 	out_dac
 
-;-------------------------------------------; = 128
+;-------------------------------------------; = 155 + out_dac(36) = 191
 	ld		a,ixh							; 8
 	or		a								; 4
 	call	p,m4_rom_next					; 17/10
 	m4_sample								; 53
 	m4_sample								; 53
+	call	burn_27							; 27
 	out_dac
 
 ;-------------------------------------------; = 21 (paid by the next slot)
@@ -198,29 +207,37 @@ m4_pcm2_addr		equ		$+1
 	ld		ixl,8							; 11
 
 m4_pcm2_loop
-;-------------------------------------------; = 126
+;-------------------------------------------; = 165 (198 worst) + out_dac(36) = 201
 m4_pcm2_pit0		equ		$+2
-	m4_inc_mix_one							; 42
+	m4_inc_mix_one							; 52 (63)
 m4_pcm2_pit1		equ		$+2
-	m4_inc_mix_one							; 42
+	m4_inc_mix_one							; 52 (63)
 m4_pcm2_pit2		equ		$+2
-	m4_inc_mix_one							; 42
+	m4_inc_mix_one							; 52 (63)
+	nop										; 4
+	nop										; 4
+	nop										; 4
 	out_dac
 
-;-------------------------------------------; = 126
+;-------------------------------------------; = 165 (198 worst) + out_dac(36) = 201
 m4_pcm2_pit3		equ		$+2
-	m4_inc_mix_one							; 42
+	m4_inc_mix_one							; 52 (63)
 m4_pcm2_pit4		equ		$+2
-	m4_inc_mix_one							; 42
+	m4_inc_mix_one							; 52 (63)
 m4_pcm2_pit5		equ		$+2
-	m4_inc_mix_one							; 42
+	m4_inc_mix_one							; 52 (63)
+	nop										; 4
+	nop										; 4
+	nop										; 4
 	out_dac
 
-;-------------------------------------------; = 84 (+18 for the next slot)
+;-------------------------------------------; = 162 (184 worst) + out_dac(36) ≈ 198
 m4_pcm2_pit6		equ		$+2
-	m4_inc_mix_one							; 42
+	m4_inc_mix_one							; 52 (63)
 m4_pcm2_pit7		equ		$+2
-	m4_inc_mix_one							; 42
+	m4_inc_mix_one							; 52 (63)
+	call	burn_31							; 31
+	call	burn_27							; 27
 	out_dac
 	dec		ixl								; 8
 	jp		nz,m4_pcm2_loop					; 10

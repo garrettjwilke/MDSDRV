@@ -77,16 +77,18 @@ DEFAULT_MODE	equ		2
 ;======================================================================
 ; MACROS
 ;----------------------------------------------------------------------
-	macro out_dac							; = 67
+
+	; Data-only DAC write. Latch must already be $2a:
+	;   mds_z80_start restores it after 68K FM writes,
+	;   idle_init leaves it selected after re-enabling DAC,
+	;   vbl_restore_fm restores b ($2a).
+	; Busy omitted: single YM write is busreq-atomic.
+	macro out_dac							; = 36
 		exx									;4
-		ld		(hl),h						;7
-		ld		a,b							;4
-		ld		($4000),a					;13
 		ld		a,(de)						;7
 		xor		c							;4
 		ld		($4001),a					;13
 		inc		e							;4
-		ld		(hl),l						;7
 		exx									;4
 	endm
 
@@ -421,6 +423,8 @@ idle_loop
 	ld		($4000),a
 	ld		a,$80
 	ld		($4001),a
+	ld		a,b								; b' = $2a, leave data port selected
+	ld		($4000),a						; (out_dac is data-only now)
 	ld		(hl),l
 	ld		e,iyl							; reset read position
 	exx
@@ -772,9 +776,12 @@ m2_pcm_bufok
 	inc		hl								; 6
 	nop										; 4
 
-;-------------------------------------------; = 103 + 31 = 134
+;-------------------------------------------; = 103 + 27 = 130 (+27 pad for
+; data-only out_dac: old emit was 67, new is 36, so restore ~201-cycle
+; sample interval that sets ~17.5 kHz)
 	ld		hl,z_load						; 10
 	dec		(hl)							; 11
+	call	burn_27							; 27
 	jp		m2_pcm_wait						; 10
 
 ;======================================================================
