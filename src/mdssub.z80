@@ -439,8 +439,14 @@ m2_init
 	ld		hl,m2_pcm1_key_on
 	ld		(m2_pcm1_key_dispatch),hl
 m2_common_init
+	ld		a,32
+	ld		(m2_pcm_len),a
 	ld		hl,m2_vbl
 	ld		(vbl_hook),hl
+	ld		hl,m2_key_on
+	ld		(m2_pcm_keyon_dispatch),hl
+	ld		hl,m2_loop
+	ld		(m2_pcm_loop_dispatch),hl
 	ld		a,$c3							; 7
 	ld		(m2_pcm1_enable),a				; 13
 	ld		a,$c3							; 7
@@ -715,7 +721,10 @@ m2_pcm2_disabled
 	ei
 
 ;-------------------------------------------; = 84 + 23 = 107
+; Samples produced by one pass. Mode 4 runs 64 sample passes, so the
+; modes that share this routine patch the count at init.
 m2_pcm_done
+m2_pcm_len		equ		$+1
 	ld		a,32							; 7
 	add		a,iyl							; 8
 	ld		iyl,a							; 8
@@ -743,7 +752,10 @@ m2_pcm_wait
 
 	inc		l								; 4		;z_key_on
 	cp		(hl)							; 7
+; mode 4 shares this loop, so both destinations are patched at init
+m2_pcm_keyon_dispatch	equ		$+1
 	jp		nz,m2_key_on					; 10 (-> 71)
+m2_pcm_loop_dispatch	equ		$+1
 	jp		m2_loop							; 10
 
 m2_pcm_bufok
@@ -1674,7 +1686,14 @@ clear_mem2
 	ldir
 	ret
 
-	align	64,0
+	align	256,0
+;======================================================================
+; PCM mode 4 SSDPCM delta table: +step0, +step1, -step0, -step1.
+; Must stay page aligned so the decoder can index it with "ld l,code"
+; while H is held constant.
+m4_delta
+	db		$00,$00,$00,$00
+
 ;======================================================================
 ; table of alternating nops and "inc hl" instructions
 pitch_update_fill
@@ -1702,5 +1721,10 @@ pitch_update_mix
 	include	"mdssub_m4.z80"
 
 	db		VERSION
+
+; The driver image must stay below the variable page, or it overwrites
+; z_busy and friends at runtime instead of failing here.
+	display	"driver end: ", $, " (limit $0e00, free: ", /d, $0e00-$, ")"
+	assert	$ <= $0e00
 
 ; vim: set ft=z8a sw=4 ts=4 noet:

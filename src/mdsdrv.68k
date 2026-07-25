@@ -3111,7 +3111,7 @@ mds_pcm_key_on
 
 @no_update_header
 	bclr	#nf+nf_pcm_pitch,flag
-	beq.s	@no_update_length
+	beq.w	@no_update_length
 
 	move.l	a_sdtop,tmpa0
 	adda.w	t_pcm_header(twork),tmpa0
@@ -3129,6 +3129,10 @@ mds_pcm_key_on
 	bne.s	@no_mode3
 	add.b	d3,d1
 @no_mode3
+	subq.b	#1,d2							; mode 4 mixes 64 per pass
+	bne.s	@no_mode4
+	add.b	d1,d1
+@no_mode4
 	moveq	#0,d2
 	move.w	t_pcm_length(twork),d2
 	divu.w	d1,d2

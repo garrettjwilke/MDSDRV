@@ -67,23 +67,19 @@ z_pcm3_count	equ		z_pcm3+6
 
 ; PCM mode 4 SSDPCM state.  Kept below z_stack so the normal mode-2
 ; volume tables ($0f00-$1eff) and ring buffer ($1f00) remain untouched.
+; The decoder state itself lives in registers; only what has to survive
+; a pass is kept here. The delta table is in the code page ($0a00) so
+; the hot loop can index it without reloading H.
 z_ssdpcm		equ		$0e20
 z_sp_bank		equ		z_ssdpcm+0	; current 32 KiB ROM bank
-z_sp_addr		equ		z_ssdpcm+1	; current ROM window address
-z_sp_blocks		equ		z_ssdpcm+3	; blocks remaining
-z_sp_reload		equ		z_ssdpcm+5	; block count for looping
-z_sp_loop		equ		z_ssdpcm+7	; nonzero = loop
-z_sp_acc		equ		z_ssdpcm+8	; signed running sample
-z_sp_code		equ		z_ssdpcm+9	; current packed codeword
-z_sp_bits		equ		z_ssdpcm+10	; codes left in codeword
-z_sp_words		equ		z_ssdpcm+11	; codewords left in block
-z_sp_active		equ		z_ssdpcm+12	; nonzero while PCM1 stream active
-z_sp_start_bank	equ		z_ssdpcm+13	; loop start bank
-z_sp_start_addr	equ		z_ssdpcm+14	; loop start address
-z_sp_table		equ		z_ssdpcm+16	; signed deltas: +s0,+s1,-s0,-s1
-z_sp_cache		equ		z_ssdpcm+24	; unused (kept for layout)
-z_sp_dbg_lo		equ		z_ssdpcm+24	; decode count low (debug)
-z_sp_dbg_hi		equ		z_ssdpcm+25	; decode count high (debug)
+z_sp_blocks		equ		z_ssdpcm+1	; blocks remaining
+z_sp_reload		equ		z_ssdpcm+3	; block count for looping
+z_sp_loop		equ		z_ssdpcm+5	; nonzero = loop
+z_sp_acc		equ		z_ssdpcm+6	; running sample, signed (raw xor $80)
+z_sp_words		equ		z_ssdpcm+7	; codewords left in block
+z_sp_start_bank	equ		z_ssdpcm+8	; loop start bank
+z_sp_start_addr	equ		z_ssdpcm+9	; loop start address
+z_sp_passes		equ		z_ssdpcm+11	; 32 sample passes done (rate check)
 
 z_stack			equ		$0f00
 z_buffer		equ		$1f00
