@@ -207,7 +207,11 @@ m4_pcm2_addr		equ		$+1
 	ld		ixl,8							; 11
 
 m4_pcm2_loop
-;-------------------------------------------; = 165 (198 worst) + out_dac(36) = 201
+;-------------------------------------------; = 164 (197 worst) + out_dac(36) = 200
+; Two nops (not three): the dec/jp at the bottom taxes the next first
+; slot by 18, so steady-state avg is (218+200+198)/3 = 205 — same as
+; fill and drain. Three nops made mix ~208 and ducked pitch whenever a
+; drum replaced the faster drain path.
 m4_pcm2_pit0		equ		$+2
 	m4_inc_mix_one							; 52 (63)
 m4_pcm2_pit1		equ		$+2
@@ -216,10 +220,9 @@ m4_pcm2_pit2		equ		$+2
 	m4_inc_mix_one							; 52 (63)
 	nop										; 4
 	nop										; 4
-	nop										; 4
 	out_dac
 
-;-------------------------------------------; = 165 (198 worst) + out_dac(36) = 201
+;-------------------------------------------; = 164 (197 worst) + out_dac(36) = 200
 m4_pcm2_pit3		equ		$+2
 	m4_inc_mix_one							; 52 (63)
 m4_pcm2_pit4		equ		$+2
@@ -228,10 +231,9 @@ m4_pcm2_pit5		equ		$+2
 	m4_inc_mix_one							; 52 (63)
 	nop										; 4
 	nop										; 4
-	nop										; 4
 	out_dac
 
-;-------------------------------------------; = 162 (184 worst) + out_dac(36) ≈ 198
+;-------------------------------------------; = 162 (184 worst) + out_dac(36) = 198
 m4_pcm2_pit6		equ		$+2
 	m4_inc_mix_one							; 52 (63)
 m4_pcm2_pit7		equ		$+2
