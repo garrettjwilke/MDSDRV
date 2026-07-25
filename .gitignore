@@ -1,3 +1,9 @@
+clownassembler/
+salvador/
+sjasmplus/
+tools/clownassembler_asm68k
+tools/salvador
+tools/sjasmplus
 /out/*
 /sample/sgdk/out/*
 /sample/sgdk/res/*.bin
