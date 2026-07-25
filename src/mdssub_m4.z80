@@ -5,7 +5,7 @@
 ; samples into the ring buffer, switches the ROM bank once, then mixes
 ; 64 PCM 2 samples on top. DAC writes are spread through both phases so
 ; the gap between them stays near the 201 cycle mode 2 interval, which
-; is what sets the 17.5 kHz output rate.
+; is what sets the ~17 kHz output rate.
 ;
 ; The pass is 64 samples rather than mode 2's 32 because SSDPCM decode
 ; costs more per sample than mode 2's fill. At 32 samples the per pass

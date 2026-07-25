@@ -265,7 +265,7 @@ entry2
 	block	$30-$,0
 ; 33-cycle burn via rst $30 (11 + 12 + 10). Restores the ~31 cycles
 ; lost when out_dac shrank from 67 to 36, so mode 2 slots stay near
-; the classic ~201-cycle / 17.5 kHz spacing.
+; the classic ~201-cycle / ~17 kHz spacing.
 burn_dac_pad
 	nop
 	nop

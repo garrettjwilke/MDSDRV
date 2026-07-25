@@ -11,7 +11,7 @@ A sound driver for Sega Mega Drive/Genesis.
 	- Can assign each or a pair of FM3 operators to one or more
 		separate tracks with volume control.
 - PCM playback modes:
-	- 2 channel PCM playback at ~17.5 kHz with volume control
+	- 2 channel PCM playback at ~17 kHz with volume control
 	- 3 channel PCM playback at ~13.3 kHz with volume control
 	- Samples can play at 8 different sampling rates independent of
 		the mixing rate
