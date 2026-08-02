@@ -96,10 +96,10 @@ DEFAULT_MODE	equ		2
 		rst		out_dac_slow
 	endm
 
-	; Mode 2 sample emit: data-only out_dac plus the ~31 cycles that the
-	; old 67-cycle out_dac used to burn, so fill/mix/silence keep the
-	; classic ~201-cycle spacing (rst $30 = burn_dac_pad = 33).
-	macro out_dac_m2						; = 69
+	; Mode 2 sample emit: data-only out_dac plus pad so fill/mix/silence
+	; sit near ~205 cy/sample (rst $30 = burn_dac_pad = 37). Matches the
+	; mode 4 / drain slowdown toward the 17000 encode.
+	macro out_dac_m2						; = 73
 		rst		burn_dac_pad
 		out_dac
 	endm
@@ -263,10 +263,11 @@ entry2
 	jr		entry3
 
 	block	$30-$,0
-; 33-cycle burn via rst $30 (11 + 12 + 10). Restores the ~31 cycles
-; lost when out_dac shrank from 67 to 36, so mode 2 slots stay near
-; the classic ~201-cycle / ~17 kHz spacing.
+; 37-cycle burn via rst $30 (11 + 16 + 10). Classic restore was 33
+; (~201 cy slots); the extra nop brings mode 2 to ~205 cy toward the
+; 17000 encode, in step with mode 4 / drain.
 burn_dac_pad
+	nop
 	nop
 	nop
 	nop
