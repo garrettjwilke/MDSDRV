@@ -793,12 +793,13 @@ m2_pcm_bufok
 	inc		hl								; 6
 	nop										; 4
 
-;-------------------------------------------; = 103 + 35 = 138
-; data-only out_dac is 36 (was 67). Pad so drain sits at ~205 cycles —
-; same as mode 4 fill/mix. A faster drain made SSDPCM pitch duck every
-; time a drum moved those slots onto the mix path.
+;-------------------------------------------; = 103 + 39 = 142
+; Pad so drain sits at ~209 cycles — same as mode 4 fill/mix after the
+; +4 cy slowdown toward the 17000 encode. A faster drain made SSDPCM
+; pitch duck every time a drum moved those slots onto the mix path.
 	ld		hl,z_load						; 10
 	dec		(hl)							; 11
+	nop										; 4
 	nop										; 4
 	nop										; 4
 	call	burn_27							; 27
