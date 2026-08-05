@@ -4,8 +4,8 @@
 ; Same buffered architecture as mode 2. One pass decodes 64 SSDPCM
 ; samples into the ring buffer, switches the ROM bank once, then mixes
 ; 64 PCM 2 samples on top. DAC writes are spread through both phases so
-; the gap between them stays near ~209 cycles/sample (~17.1 kHz pure
-; loop, ~16.9 kHz effective under typical VBlank load) to track the
+; the gap between them stays near ~205 cycles/sample (~17.5 kHz pure
+; loop, ~17.0 kHz effective under typical VBlank load) to track the
 ; 17000 Hz encode target.
 ;
 ; The pass is 64 samples rather than mode 2's 32 because SSDPCM decode
@@ -151,24 +151,23 @@ m4_pcm1_addr		equ		$+2
 ; 16 iterations of 4 samples, 2 DAC writes each
 ;----------------------------------------------------------------------
 m4_fill_loop
-;-------------------------------------------; = 166 (+21 on re-entry) + out_dac(36) = 202
-; Pad to ~209 cy/sample (was ~205). Measured mode 4 was ~17208 Hz —
-; ~1.2% sharp of the 17000 encode; +4 cy pulls effective rate nearer
-; 16900 so SSDPCM sits closer in tune with FM.
+;-------------------------------------------; = 162 (+21 on re-entry) + out_dac(36) = 198
+; Pad to ~205 cy/sample. BGM_08 measured ~16793 Hz at 209 cy — ~1.2%
+; flat of the 17000 encode; -4 cy (burn_31→burn_27) targets ~17000.
 	ld		c,(ix+0)						; 19
 	inc		ix								; 10
 	m4_sample								; 53
 	m4_sample								; 53
-	call	burn_31							; 31
+	call	burn_27							; 27
 	out_dac
 
-;-------------------------------------------; = 159 + out_dac(36) = 195
+;-------------------------------------------; = 155 + out_dac(36) = 191
 	ld		a,ixh							; 8
 	or		a								; 4
 	call	p,m4_rom_next					; 17/10
 	m4_sample								; 53
 	m4_sample								; 53
-	call	burn_31							; 31
+	call	burn_27							; 27
 	out_dac
 
 ;-------------------------------------------; = 21 (paid by the next slot)
@@ -209,11 +208,10 @@ m4_pcm2_addr		equ		$+1
 	ld		ixl,8							; 11
 
 m4_pcm2_loop
-;-------------------------------------------; = 168 (201 worst) + out_dac(36) = 204
-; Three nops on the first two slots: dec/jp taxes the next first slot
-; by 18, so steady-state avg is (222+204+202)/3 = 209 — same as the
-; slowed fill and drain. Keep all three paths matched or drums duck
-; SSDPCM pitch again.
+;-------------------------------------------; = 164 (197 worst) + out_dac(36) = 200
+; Two nops on the first two slots: dec/jp taxes the next first slot
+; by 18, so steady-state avg is (218+200+198)/3 = 205 — same as fill
+; and drain. Keep all three paths matched or drums duck SSDPCM pitch.
 m4_pcm2_pit0		equ		$+2
 	m4_inc_mix_one							; 52 (63)
 m4_pcm2_pit1		equ		$+2
@@ -222,10 +220,9 @@ m4_pcm2_pit2		equ		$+2
 	m4_inc_mix_one							; 52 (63)
 	nop										; 4
 	nop										; 4
-	nop										; 4
 	out_dac
 
-;-------------------------------------------; = 168 (201 worst) + out_dac(36) = 204
+;-------------------------------------------; = 164 (197 worst) + out_dac(36) = 200
 m4_pcm2_pit3		equ		$+2
 	m4_inc_mix_one							; 52 (63)
 m4_pcm2_pit4		equ		$+2
@@ -234,15 +231,14 @@ m4_pcm2_pit5		equ		$+2
 	m4_inc_mix_one							; 52 (63)
 	nop										; 4
 	nop										; 4
-	nop										; 4
 	out_dac
 
-;-------------------------------------------; = 166 (188 worst) + out_dac(36) = 202
+;-------------------------------------------; = 162 (184 worst) + out_dac(36) = 198
 m4_pcm2_pit6		equ		$+2
 	m4_inc_mix_one							; 52 (63)
 m4_pcm2_pit7		equ		$+2
 	m4_inc_mix_one							; 52 (63)
-	call	burn_31							; 31
+	call	burn_27							; 27
 	call	burn_27							; 27
 	nop										; 4
 	out_dac
@@ -328,6 +324,16 @@ m4_pcm2_disabled
 	di
 	call	z,idle_init						; 10
 	ei
+
+; Pad so bank→next matches bank→first-mix when PCM2 is active.
+; Active mix lost 4 cy with the 205-target retune; drop the silent pad
+; by the same amount (burn_31→burn_27) or drums duck SSDPCM again.
+; burn_27+burn_27+7 nops = 82.
+	call	burn_27							; 27
+	call	burn_27							; 27
+	dup		7
+		nop									; 4
+	edup
 	jp		m2_pcm_done						; 10
 
 ;======================================================================

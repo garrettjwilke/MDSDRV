@@ -3083,88 +3083,119 @@ mds_pcm_key_on
 	beq.w	mds_update_return
 	bset	#cf+cf_key_on,flag
 	andi.l	#~((1<<(nf+nf_vol))|(1<<(nf+nf_slur))),flag
-	bclr	#nf+nf_pcm_header,flag
-	beq.s	@no_update_header
 
-	move.l	a_sdtop,tmpa0
-	adda.w	t_pcm_header(twork),tmpa0
-	move.b	(tmpa0),d2
-	move.l	(tmpa0),d1
-	add.l	d1,d1
-	lsr.w	d1
-	ori.w	#$8000,d1
-	lea		zp_addr+2(zram,d0),tmpa0
-	move.w	d1,-(sp)						; push a word
-	mds_z80_wait_req
-	move.b	(sp)+,-(tmpa0)					; pop high byte
-	move.b	d1,-(tmpa0)						; low byte
-	swap	d1
-	add.b	w_pcm_bank(work),d1
-	move.b	d1,-(tmpa0)
-	btst	#7,d2
-	beq.s	@raw_header_done
-	move.l	a_sdtop,tmpa0
-	adda.w	t_pcm_header(twork),tmpa0
-	move.b	6(tmpa0),z_sp_loop(zram)
-@raw_header_done
-	mds_z80_start
+;----------------------------------------------------------------------
+; Build header / pitch / volume off-bus, then take the Z80 bus once.
+; Separate wait_req/start pairs used to freeze the DAC up to three times
+; per drum hit, which ducks SSDPCM pitch in mode4 on every kick/snare.
+;
+; Stack push order (bottom→top): volume, optional pitch, optional header.
+; Write order: header, pitch, key-on+vol (key-on last so Z80 data is ready).
+;----------------------------------------------------------------------
+	mds_z80_get_vol							; d1 = vol (uses d2)
+	move.w	d1,-(sp)						; volume
 
-@no_update_header
+	moveq	#0,d3							; d3 bit0=header, bit1=pitch
+
 	bclr	#nf+nf_pcm_pitch,flag
-	beq.w	@no_update_length
+	beq.s	@prep_no_pitch
+	bset	#1,d3
 
 	move.l	a_sdtop,tmpa0
 	adda.w	t_pcm_header(twork),tmpa0
 	btst	#7,(tmpa0)
-	bne.s	@ssdpcm_length
+	bne.s	@prep_ssdpcm_length
 
-	clr.w	d1
+	moveq	#0,d1
 	move.b	t_pcm_pitch(twork),d1
-	move.b	d1,d3
+	move.w	d1,d2							; pitch
 	add.b	d1,d1
+	add.b	d1,d1							; pitch * 4
+	moveq	#15,d4
+	and.b	w_pcm_mode(work),d4
+	subq.b	#3,d4
+	bne.s	@prep_no_mode3
+	add.b	d2,d1							; mode3 length scale
+@prep_no_mode3
+	subq.b	#1,d4							; mode 4 mixes 64 per pass
+	bne.s	@prep_no_mode4
 	add.b	d1,d1
-	moveq	#15,d2
-	and.b	w_pcm_mode(work),d2
-	subq.b	#3,d2
-	bne.s	@no_mode3
-	add.b	d3,d1
-@no_mode3
-	subq.b	#1,d2							; mode 4 mixes 64 per pass
-	bne.s	@no_mode4
-	add.b	d1,d1
-@no_mode4
-	moveq	#0,d2
-	move.w	t_pcm_length(twork),d2
-	divu.w	d1,d2
-	addi.w	#$1ff,d2
-	lea		zp_count(zram,d0),tmpa0
-	move.w	d2,-(sp)						; push a word
-	mds_z80_wait_req
-	move.b	d3,zp_pitch-zp_count(tmpa0)		; write pitch
-	move.b	d2,(tmpa0)+						; write count
-	move.b	(sp)+,(tmpa0)
-	mds_z80_start
-	bra.s	@no_update_length
+@prep_no_mode4
+	moveq	#0,d4
+	move.w	t_pcm_length(twork),d4
+	divu.w	d1,d4
+	addi.w	#$1ff,d4
+	move.w	d4,-(sp)						; count
+	move.w	d2,-(sp)						; pitch
+	bra.s	@prep_no_pitch
 
-@ssdpcm_length
+@prep_ssdpcm_length
+	moveq	#0,d4
+	move.w	t_pcm_length(twork),d4			; exact ss2 block count
 	moveq	#0,d2
-	move.w	t_pcm_length(twork),d2			; exact ss2 block count
-	move.b	t_pcm_pitch(twork),d3
-	tst.b	d3
-	bne.s	@ssdpcm_pitch_ok
-	moveq	#8,d3
-@ssdpcm_pitch_ok
-	lea		zp_count(zram,d0),tmpa0
-	move.w	d2,-(sp)
-	mds_z80_wait_req
-	move.b	d3,zp_pitch-zp_count(tmpa0)
-	move.b	d2,(tmpa0)+
-	move.b	(sp)+,(tmpa0)
-	mds_z80_start
+	move.b	t_pcm_pitch(twork),d2
+	bne.s	@prep_ssdpcm_pitch_ok
+	moveq	#8,d2
+@prep_ssdpcm_pitch_ok
+	move.w	d4,-(sp)						; count
+	move.w	d2,-(sp)						; pitch
 
-@no_update_length
-	mds_z80_get_vol
-	mds_z80_pcm_vol_start	d0,d1
+@prep_no_pitch
+	bclr	#nf+nf_pcm_header,flag
+	beq.s	@prep_no_header
+	bset	#0,d3
+
+	move.l	a_sdtop,tmpa0
+	adda.w	t_pcm_header(twork),tmpa0
+	move.b	(tmpa0),d2						; header flags (bit7=ssdpcm)
+	move.l	(tmpa0),d1
+	add.l	d1,d1
+	lsr.w	d1
+	ori.w	#$8000,d1						; z80 window address
+	move.w	d1,-(sp)						; addr
+	swap	d1
+	add.b	w_pcm_bank(work),d1
+	and.l	#$ff,d1
+	move.w	d1,-(sp)						; bank
+	move.w	d2,-(sp)						; flags
+
+@prep_no_header
+	mds_z80_wait_req
+
+	btst	#0,d3
+	beq.s	@wr_no_header
+	move.w	(sp)+,d2						; flags
+	move.w	(sp)+,d1						; bank
+	move.w	(sp)+,d4						; addr
+	lea		zp_addr+2(zram,d0),tmpa0
+	ror.w	#8,d4
+	move.b	d4,-(tmpa0)						; addr high
+	ror.w	#8,d4
+	move.b	d4,-(tmpa0)						; addr low
+	move.b	d1,-(tmpa0)						; bank
+	btst	#7,d2
+	beq.s	@wr_no_header
+	move.l	a_sdtop,tmpa0
+	adda.w	t_pcm_header(twork),tmpa0
+	move.b	6(tmpa0),z_sp_loop(zram)
+@wr_no_header
+
+	btst	#1,d3
+	beq.s	@wr_no_pitch
+	move.w	(sp)+,d2						; pitch
+	move.w	(sp)+,d1						; count
+	lea		zp_count(zram,d0),tmpa0
+	move.b	d2,zp_pitch-zp_count(tmpa0)
+	move.b	d1,(tmpa0)+						; count low
+	ror.w	#8,d1
+	move.b	d1,(tmpa0)						; count high
+@wr_no_pitch
+
+	move.w	(sp)+,d1						; volume
+	st.b	z_key_on(zram)
+	st.b	zp_key_on(zram,d0)
+	move.b	d1,zp_vol(zram,d0)
+	mds_z80_start
 	bra.w	mds_update_return
 
 mds_pcm_key_off_flag
