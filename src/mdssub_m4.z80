@@ -420,11 +420,13 @@ m4_block_header
 ; key off and let the silence path fill the rest of this pass.
 ;----------------------------------------------------------------------
 m4_stream_end
-	pop		hl								; drop the block header return
 	ld		a,(z_sp_loop)
 	or		a
-	jp		z,m4_stream_stop
+	jr		nz,.loop
+	pop		hl								; drop the block header return
+	jr		m4_stream_stop
 
+.loop
 	ld		a,(z_sp_start_bank)
 	call	m4_pcm1_rebank
 	out_dac_slow

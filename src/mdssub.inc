@@ -133,21 +133,26 @@ mds_z80_wait_fm		macro
 @wait_z80\@
 	btst.b	#0,(zreq)
 	bne.s	@wait_z80\@
-	tst.b	z_busy(zram)
-	beq.s	@done\@
-	move.w	#$0000,(zreq)		; z80 is writing to the FM chip
-	movem.l	d0-d4,-(sp)								; 8+40 : 48
-	movem.l	(sp)+,d0-d4								;      : 96
-	bra.s	@stop_z80\@								;   10 : 106
-@done\@
 	endm
 
 ;======================================================================
-; start the Z80 again
+; start the Z80 again (generic bus release, no Z80 bus writes)
 ;----------------------------------------------------------------------
-; Re-select DAC data port $2a so the Z80 out_dac hot path can write
-; $4001 only. Harmless on PCM-only bus releases.
 mds_z80_start		macro
+	move.w	#$0000,(zreq)
+	endm
+
+;======================================================================
+; restore DAC data port $2a and start the Z80 again
+;----------------------------------------------------------------------
+; Burn 96 cycles (movem.l to/from stack) to exceed the YM2612 83-cycle
+; busy time with zero hardware polling, ensuring discrete YM2612 and
+; integrated YM3438 chips never drop the address write to port $2a.
+; Then re-select port $2a (DAC data) and release the Z80 bus.
+; MUST ONLY be called while the Z80 bus is held by the 68K!
+mds_fm_start		macro
+	movem.l	d0-d4,-(sp)
+	movem.l	(sp)+,d0-d4
 	move.b	#$2a,$4000(zram)
 	move.w	#$0000,(zreq)
 	endm

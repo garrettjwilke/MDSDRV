@@ -351,8 +351,12 @@ vbl_exx
 ; and exiting the VBL routine, however it seems like this is needed
 ; anyway to reduce clicking noises.
 vbl_restore_fm
+	call	burn_31
+	call	burn_27
 	ld		a,b
 	ld		($4000),a
+	xor		a
+	ld		(z_busy),a
 	exx
 	ex		af,af'
 	ei
@@ -413,16 +417,16 @@ m0_init
 ;----------------------------------------------------------------------
 idle_init
 	exx
-	ld		(hl),h
 	ld		a,$2a							; silence dac
 	ld		($4000),a
 	ld		a,$80
 	ld		($4001),a
+	call	burn_31
+	call	burn_27
 	ld		a,$2b							; disable dac
 	ld		($4000),a
 	ld		a,$00
 	ld		($4001),a
-	ld		(hl),l
 	exx
 
 idle_loop
@@ -436,14 +440,14 @@ idle_loop
 
 .mode_changed
 	exx
-	ld		(hl),h
 	ld		a,$2b							; enable dac
 	ld		($4000),a
 	ld		a,$80
 	ld		($4001),a
+	call	burn_31
+	call	burn_27
 	ld		a,b								; b' = $2a, leave data port selected
 	ld		($4000),a						; (out_dac is data-only now)
-	ld		(hl),l
 	ld		e,iyl							; reset read position
 	exx
 burn_31

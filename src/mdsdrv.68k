@@ -258,7 +258,7 @@ mds_command
 	nop
 	nop
 	move.b	d1,$4001(zram)
-	mds_z80_start
+	mds_fm_start
 	move.w	(sp)+,sr
 	movem.l	(sp)+,zram/zreq
 	rts
@@ -283,7 +283,7 @@ mds_command
 	nop
 	nop
 	move.b	d1,$4003(zram)
-	mds_z80_start
+	mds_fm_start
 	move	(sp)+,sr
 	movem.l	(sp)+,zram/zreq
 	rts
@@ -1399,7 +1399,7 @@ mds_update_seq
 	mds_z80_wait_fm
 	move.b	0(@tbase,@trackpos),$4000(zram)
 	move.b	1(@tbase,@trackpos),$4001(zram)	; 24
-	mds_z80_start
+	mds_fm_start
 	bra.w	@next_command
 
 ;----------------------------------------------------------------------
@@ -1421,7 +1421,7 @@ mds_update_seq
 	mds_z80_wait_fm
 	move.b	@cmd,0(zram,@tempreg)
 	move.b	1(@tbase,@trackpos),1(zram,@tempreg)
-	mds_z80_start
+	mds_fm_start
 	bra.w	@next_command
 
 @fmcreg_slot
@@ -1682,7 +1682,7 @@ mds_update_mtab
 	move.b	d2,0(zram,d4)
 	nop
 	move.b	d1,1(zram,d4)
-	mds_z80_start
+	mds_fm_start
 	bra.w	@next_command
 
 @fmcreg_slot
@@ -2161,7 +2161,7 @@ mds_fm3_update_pitch
 	move.b	#$a6,d1							; op4 = a2/a6
 	bsr.s	@write_one
 @skip_op4
-	mds_z80_start
+	mds_fm_start
 	rts
 
 @write_one
@@ -2442,7 +2442,7 @@ mds_fm3_cutoff
 	dbra	d2,@nextop						;  10/14 : 32
 	swap	chnid
 
-	mds_z80_start
+	mds_fm_start
 	bra.w	mds_update_return
 
 ;======================================================================
@@ -2472,7 +2472,7 @@ mds_fm0_update
 ; key_off update
 ;----------------------------------------------------------------------
 	bclr	#nf+nf_key_off,flag
-	beq.s	@no_key_off
+	beq.w	@no_key_off
 
 	bclr	#cf+cf_key_on,flag
 
@@ -2493,11 +2493,11 @@ mds_fm0_update
 	move.b	d0,$4001(zram)
 
 	bclr	#nf+nf_fm3,flag
-	beq.s	@no_key_off
+	beq.s	@key_off_stopped
 
 	tst.l	flag
 	bpl.s	@fm3_cut_off
-	pea		@no_key_off(pc)
+	pea		@key_off_stopped(pc)
 	bra.w	mds_fm3_update_flag
 
 @fm3_cut_off
@@ -2513,14 +2513,12 @@ mds_fm0_update
 	bpl.w	mds_fm_cutoff
 	move.b	chnid,$4001(zram)				; 12 cycles + 2 nop
 
-@no_key_off
 ;----------------------------------------------------------------------
-; instrument update
+; instrument & volume update when Z80 was already stopped by key_off
 ;----------------------------------------------------------------------
-; this code should burn enough cycles (92) to make it necessary not to
-; wait for busy flag in mds_fm_upload.
+@key_off_stopped
 	bclr	#nf+nf_ins,flag
-	beq.s	@no_ins
+	beq.s	@no_ins_stopped
 
 	move.b	t_ins(twork),d0
 	add.w	d0,d0
@@ -2528,38 +2526,56 @@ mds_fm0_update
 	movea.w	0(tmpa1,d0),tmpa1
 	adda.l	a_sdtop,tmpa1					; ptr. to ins data
 	bsr.w	mds_fm_update_ins
-;----------------------------------------------------------------------
-; TODO: macro table update (after setting instrument)
-;----------------------------------------------------------------------
 
-@no_mtab_ins
 	bclr	#nf+nf_vol,flag
-	bra.s	@update_vol
+	bra.s	@update_vol_stopped
 
-@no_ins
-;----------------------------------------------------------------------
-; TODO: macro table update
-;----------------------------------------------------------------------
-
-
-;----------------------------------------------------------------------
-; vol update
-;----------------------------------------------------------------------
+@no_ins_stopped
 	bclr	#nf+nf_vol,flag
-	beq.s	@no_vol
-	mds_z80_wait_fm
+	beq.s	@no_vol_stopped
 
-@update_vol
+@update_vol_stopped
 	bsr.w	mds_fm_update_vol
 
-@no_vol
+@no_vol_stopped
+	mds_fm_start
+	bra.s	@start_pitch_update
+
+;----------------------------------------------------------------------
+; instrument & volume update when Z80 was NOT stopped (no key_off)
+;----------------------------------------------------------------------
+@no_key_off
+	bclr	#nf+nf_ins,flag
+	beq.s	@no_ins
+
+	mds_z80_wait_fm
+	move.b	t_ins(twork),d0
+	add.w	d0,d0
+	move.l	t_base_addr(twork),tmpa1
+	movea.w	0(tmpa1,d0),tmpa1
+	adda.l	a_sdtop,tmpa1					; ptr. to ins data
+	bsr.w	mds_fm_update_ins
+
+	bclr	#nf+nf_vol,flag
+	bsr.w	mds_fm_update_vol
+	mds_fm_start
+	bra.s	@start_pitch_update
+
+@no_ins
+	bclr	#nf+nf_vol,flag
+	beq.s	@start_pitch_update
+
+	mds_z80_wait_fm
+	bsr.w	mds_fm_update_vol
+	mds_fm_start
+
+@start_pitch_update
 ;----------------------------------------------------------------------
 ; pitch update
 ;----------------------------------------------------------------------
-	mds_z80_start
 	bsr.w	mds_pitch_update
 	cmp.w	t_last_pitch(twork),d0
-	beq.s	@no_write_pitch
+	beq.w	@no_write_pitch
 
 ; this routine won't be truly useful until i have FM f-num
 ; calculation on Z80
@@ -2593,7 +2609,7 @@ mds_fm0_update
 	move.b	d1,0(zram,chnid)				; 14  :  54
 	nop
 	move.b	d0,1(zram,chnid)				; 4+14 : 18
-	mds_z80_start
+	mds_fm_start
 	swap	chnid
 
 @no_write_pitch
@@ -2611,7 +2627,7 @@ mds_fm0_update
 	move.b	d1,0(zram,chnid)
 	nop
 	move.b	d0,1(zram,chnid)				; 4+14 : 18
-	mds_z80_start
+	mds_fm_start
 	swap	chnid
 
 @no_lfo
@@ -2638,7 +2654,7 @@ mds_fm0_update
 	andi.b	#$f0,d0							; 8 : 12
 	or.b	chnid,d0						; 4 : 16
 	move.b	d0,$4001(zram)					;12 : 28
-	mds_z80_start
+	mds_fm_start
 
 @no_key_on
 	bra.w	mds_update_return
@@ -2672,7 +2688,7 @@ mds_fm3_update
 	bsr.w	mds_fm3_update_vol
 
 @no_vol_stopped_z80
-	mds_z80_start
+	mds_fm_start
 
 @no_vol
 	swap	d4
@@ -2698,7 +2714,7 @@ mds_fm3_update
 	add.b	d4,d4
 	andi.b	#$f2,d4			;assumes that bit1 of the op_mask is unused
 	move.b	d4,$4001(zram)
-	mds_z80_start
+	mds_fm_start
 
 @no_key_on
 	bra.w	mds_update_return
@@ -3024,7 +3040,7 @@ mds_pcm1_update
 	nop
 	nop
 	move.b	#$02,$4003(zram)				; 12 cycles + 2 nop
-	mds_z80_start
+	mds_fm_start
 
 @no_fm_key_off
 	bclr	#nf+nf_pan_lfo,flag
@@ -3036,7 +3052,7 @@ mds_pcm1_update
 	nop
 	nop
 	move.b	d1,$4003(zram)
-	mds_z80_start
+	mds_fm_start
 	bra.s	mds_pcm_update
 
 ;======================================================================
