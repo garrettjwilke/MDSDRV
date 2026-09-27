@@ -5,7 +5,7 @@ MDSLINK := mdslink
 
 MDSDATA := $(wildcard data/bgm/*.mml) $(wildcard data/bgm/*.mds) $(wildcard data/se/*.mml) $(wildcard data/se/*.mds)
 
-DRIVER_NAME := mdsdrv
+DRIVER_NAME := mdsdrv-rng
 
 .PHONY: all pre-build mdsdrv clean
 
