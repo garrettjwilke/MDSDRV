@@ -1,41 +1,34 @@
 ;======================================================================
 ; PCM mode 4 - SSDPCM (ss2) on PCM 1, raw PCM on PCM 2
 ;----------------------------------------------------------------------
-; Same buffered architecture as mode 2. One pass decodes 64 SSDPCM
-; samples into the ring buffer, switches the ROM bank once, then mixes
+; Same buffered architecture as mode 2. One pass writes 64 SSDPCM
+; outputs into the ring buffer, switches the ROM bank once, then mixes
 ; 64 PCM 2 samples on top. DAC writes are spread through both phases so
 ; the gap between them stays near ~205 cycles/sample (~17.5 kHz pure
 ; loop, ~17.0 kHz effective under typical VBlank load) to track the
 ; 17000 Hz encode target.
 ;
-; The pass is 64 samples rather than mode 2's 32 because SSDPCM decode
-; costs more per sample than mode 2's fill. At 32 samples the per pass
-; overhead (bank switch, block header, accounting) left exactly 32 DAC
-; writes per 32 samples decoded, so the buffer could never make up what
-; a VBlank ack wait drained and it bled down to an underrun during any
-; sustained drum part. Doubling the pass pays that overhead half as
-; often, which buys 4 samples of headroom per pass at the same spacing.
+; pcmrate 1..8: output every tick, only step the ss2 decoder when the
+; phase bit fires (same as the host emulator). Pitch 8 uses the tight
+; all-decode loop. Pitch 1..7 uses hold-vs-decode slots padded to the
+; same slot time so DAC spacing does not depend on pitch. Skipping
+; bitstream samples would desync the predictor; holds repeat the
+; accumulator instead.
 ;
-; Work budget per sample (the 36 cycle out_dac is on top of this):
-;   SSDPCM decode and store       53
-;   codeword fetch / bank check   13
-;   fill loop counter              5
-;   PCM 2 mix                     52 (63 worst when saturating)
-;   pass overhead                 10
+; The pass is 64 samples rather than mode 2's 32 because SSDPCM decode
+; costs more per sample than mode 2's fill.
 ;
 ; The accumulator is held in signed form (raw xor $80). Adding deltas
 ; commutes with the +128 bias, so the decode loop stores straight to the
 ; buffer with no conversion step.
 ;
-; The mix hard-saturates on signed overflow (same as mode 2). Asset
-; headroom still helps loudness, but wrap clicks no longer occur.
+; The mix hard-saturates on signed overflow (same as mode 2).
 ; out_dac is data-only ($4001); idle_init and mds_z80_start must leave
 ; the YM latch on $2a so sample bytes never hit the DAC enable reg.
 ;
 ; ss2 stream layout: one initial sample byte, then 34 byte blocks of
 ; two step sizes followed by 32 codewords of four 2-bit deltas (MSB
-; first). 128 samples per block = 2 passes, so block headers always
-; land on a pass boundary.
+; first). At pitch 8, 128 samples per block = 2 passes.
 ;======================================================================
 
 ;----------------------------------------------------------------------
@@ -54,6 +47,17 @@
 		ld		b,a							;4
 		inc		e							;4
 		ld		(de),a						;7
+	endm
+
+; hold: pad to 83 so jr hold (12) + body (83) = 95
+; matches decode: ld a,iyl (8)+or a (4)+call z (10)+dec iyl (8)+sample (53)+jr next (12) = 95
+	macro	m4_hold_body					; = 83
+		inc		e							;4
+		ld		a,b							;4
+		ld		(de),a						;7
+		dup		17							; (68)
+			nop								;4
+		edup
 	endm
 
 ;----------------------------------------------------------------------
@@ -77,6 +81,25 @@
 		m4_mix_one
 	endm
 
+	; overlay pit with "ld a,iyl" (decode) or "jr hold" (hold)
+	macro	m4_patch_slot pit,hold
+		ld		a,(hl)
+		inc		l
+		or		a
+		jr		nz,1F
+		ld		a,$18						; jr
+		ld		(pit),a
+		ld		a,hold-pit-2
+		ld		(pit+1),a
+		jr		2F
+1
+		ld		a,$fd						; ld a,iyl
+		ld		(pit),a
+		ld		a,$7d
+		ld		(pit+1),a
+2
+	endm
+
 ;======================================================================
 m4_init
 	ld		a,64							; samples per pass
@@ -91,6 +114,15 @@ m4_init
 	ld		(m4_pcm1_enable),a				; 13
 	ld		a,$c3							; 7
 	ld		(m4_pcm2_enable),a				; 13
+	ld		hl,m4_fill_fast
+	ld		(m4_fill_dispatch+1),hl
+	; PCM1 must always re-select the SSDPCM bank before fill. Dummying
+	; both sides left the mapper on PCM2 after a drum, so the decoder
+	; read kick/snare ROM as ss2 and the chop turned to noise.
+	ld		hl,m4_pcm1_setbank
+	ld		(m4_pcm1_bank_dispatch+1),hl
+	ld		hl,m4_bank_dummy
+	ld		(m4_pcm2_bank_dispatch+1),hl
 	ld		hl,z_mode_change				; 10
 
 m4_key_on
@@ -107,7 +139,7 @@ m4_key_on
 	call	nz,m4_pcm2_key_on				; 17/10
 
 ;======================================================================
-; Decode 64 SSDPCM samples into the buffer (34 DAC writes)
+; Decode 64 SSDPCM outputs into the buffer
 ;----------------------------------------------------------------------
 m4_loop
 ;-------------------------------------------; = 39 + 32 = 71
@@ -131,12 +163,14 @@ m4_pcm1_enable		equ		$
 	out_dac
 
 ;-------------------------------------------; = 148
-	call	m4_pcm1_setbank					; 100
+m4_pcm1_bank_dispatch
+	call	m4_pcm1_setbank					; 100 (or dummy 100)
 m4_pcm1_addr		equ		$+2
 	ld		ix,$8000						; 14
 	ld		a,e								; 4
 	add		a,64							; 7
 	ld		(m4_fill_end),a					; 13
+	ld		(m4_fill_p_end),a				; 13
 	ld		h,high(m4_delta)				; 7
 	out_dac
 
@@ -146,14 +180,16 @@ m4_pcm1_addr		equ		$+2
 	ld		a,(z_sp_words)					; 13
 	or		a								; 4
 	call	z,m4_block_header				; 17/10
+m4_fill_dispatch
+	jp		m4_fill_fast
 
 ;----------------------------------------------------------------------
-; 16 iterations of 4 samples, 2 DAC writes each
+; Pitch 8: 16 iterations of 4 decodes, 2 DAC writes each
 ;----------------------------------------------------------------------
+m4_fill_fast
 m4_fill_loop
 ;-------------------------------------------; = 162 (+21 on re-entry) + out_dac(36) = 198
-; Pad to ~205 cy/sample. BGM_08 measured ~16793 Hz at 209 cy — ~1.2%
-; flat of the 17000 encode; -4 cy (burn_31→burn_27) targets ~17000.
+; Pad to ~205 cy/sample so fill, mix, and drain stay matched.
 	ld		c,(ix+0)						; 19
 	inc		ix								; 10
 	m4_sample								; 53
@@ -184,13 +220,136 @@ m4_fill_end			equ		$+1
 	ld		a,(hl)							; 7
 	sub		16								; 7
 	ld		(hl),a							; 7
+	jp		m4_pcm2_bank
+
+;----------------------------------------------------------------------
+; Pitch 1..7: 8 output slots, hold or decode, 4 DAC writes
+; IYL is the remaining deltas in C (0 = need fetch). Parked IYL
+; (buffer index) lives in z_sp_saved_iyl for the mix phase.
+;----------------------------------------------------------------------
+m4_fill_pitched
+	ld		a,iyl
+	ld		(z_sp_saved_iyl),a
+	xor		a
+	ld		iyl,a							; bits remaining
+	ld		h,high(m4_delta)
+
+m4_fill_p_loop
+	; pair 0: slots 0,1 — enter at pitN (self-mod jr hold vs decode)
+m4_pit0
+	ld		a,iyl							; overlay: jr m4_hold0
+	or		a
+	call	z,m4_fetch
+	dec		iyl
+	m4_sample
+	jr		m4_next0
+m4_hold0
+	m4_hold_body
+m4_next0
+m4_pit1
+	ld		a,iyl
+	or		a
+	call	z,m4_fetch
+	dec		iyl
+	m4_sample
+	jr		m4_next1
+m4_hold1
+	m4_hold_body
+m4_next1
+	nop										; 4  → pair ~206
+	out_dac
+
+	; pair 1: slots 2,3
+m4_pit2
+	ld		a,iyl
+	or		a
+	call	z,m4_fetch
+	dec		iyl
+	m4_sample
+	jr		m4_next2
+m4_hold2
+	m4_hold_body
+m4_next2
+m4_pit3
+	ld		a,iyl
+	or		a
+	call	z,m4_fetch
+	dec		iyl
+	m4_sample
+	jr		m4_next3
+m4_hold3
+	m4_hold_body
+m4_next3
+	ld		a,ixh
+	or		a
+	call	p,m4_rom_next
+	out_dac
+
+	; pair 2: slots 4,5
+m4_pit4
+	ld		a,iyl
+	or		a
+	call	z,m4_fetch
+	dec		iyl
+	m4_sample
+	jr		m4_next4
+m4_hold4
+	m4_hold_body
+m4_next4
+m4_pit5
+	ld		a,iyl
+	or		a
+	call	z,m4_fetch
+	dec		iyl
+	m4_sample
+	jr		m4_next5
+m4_hold5
+	m4_hold_body
+m4_next5
+	nop
+	out_dac
+
+	; pair 3: slots 6,7
+m4_pit6
+	ld		a,iyl
+	or		a
+	call	z,m4_fetch
+	dec		iyl
+	m4_sample
+	jr		m4_next6
+m4_hold6
+	m4_hold_body
+m4_next6
+m4_pit7
+	ld		a,iyl
+	or		a
+	call	z,m4_fetch
+	dec		iyl
+	m4_sample
+	jr		m4_next7
+m4_hold7
+	m4_hold_body
+m4_next7
+	ld		a,e
+m4_fill_p_end		equ		$+1
+	cp		$00
+	jp		nz,m4_fill_p_loop
+	out_dac
+
+	ld		a,(z_sp_saved_iyl)
+	ld		iyl,a
+	ld		a,b
+	ld		(z_sp_acc),a
+	ld		(m4_pcm1_addr),ix
+	; z_sp_words already decremented by m4_fetch
 
 ;======================================================================
 ; Mix 64 PCM 2 samples on top (25 DAC writes)
 ;----------------------------------------------------------------------
 m4_pcm2_bank
-;-------------------------------------------; = 73
-	set_bank_fast							; 73
+;-------------------------------------------; = 100 with call
+m4_pcm2_bank_dispatch
+	call	m4_pcm2_do_bank					; 100 (or dummy 100)
 	out_dac
 
 ;-------------------------------------------; = 68
@@ -260,7 +419,7 @@ m4_pcm2_bank_num	equ		$+1
 	ld		a,$00							; 7
 	inc		a								; 4
 	ld		(m4_pcm2_bank_num),a			; 13
-	write_bank_start_bc m4_pcm2_bank		; 21
+	write_bank_start_bc m4_pcm2_bank_ins		; 21
 	call	write_bank						; 230
 
 m4_pcm2_nosw
@@ -315,6 +474,10 @@ m4_pcm2_disabled
 .no_keyoff
 	ld		a,$c3							; 7
 	ld		(m4_pcm2_enable),a				; 13
+	ld		hl,m4_pcm1_setbank
+	ld		(m4_pcm1_bank_dispatch+1),hl
+	ld		hl,m4_bank_dummy
+	ld		(m4_pcm2_bank_dispatch+1),hl
 
 ; are any channels playing?
 	ld		hl,m4_pcm1_enable				; 10
@@ -326,8 +489,6 @@ m4_pcm2_disabled
 	ei
 
 ; Pad so bank→next matches bank→first-mix when PCM2 is active.
-; Active mix lost 4 cy with the 205-target retune; drop the silent pad
-; by the same amount (burn_31→burn_27) or drums duck SSDPCM again.
 ; burn_27+burn_27+7 nops = 82.
 	call	burn_27							; 27
 	call	burn_27							; 27
@@ -352,6 +513,23 @@ m4_pcm1_bank		equ		$
 	edup
 	ret										; 10
 
+m4_pcm2_do_bank								; = 100 including the call
+m4_pcm2_bank_ins	equ		$
+	ld		hl,$6001						; 10
+	dup		9								; (63)
+		ld	(hl),h							; 7
+	edup
+	ret										; 10
+
+; Equal-cycle stand-in when PCM2 is silent (no bank ping-pong).
+m4_bank_dummy								; call+body+ret = 100
+	call	burn_31							; 31
+	push	hl								; 11
+	pop		hl								; 10
+	push	hl								; 11
+	pop		hl								; 10
+	ret										; 10
+
 ;----------------------------------------------------------------------
 ; Point the bank instruction block at the bank in a, then switch to it
 m4_pcm1_rebank
@@ -363,24 +541,47 @@ m4_pcm1_rebank
 ;----------------------------------------------------------------------
 ; The rom pointer left the $8000-$ffff window - move to the next bank
 m4_rom_next
-	push	af
 	push	bc
-	push	de
-	push	hl
 	ld		a,(z_sp_bank)
 	inc		a
 	call	m4_pcm1_rebank
 	ld		ixh,$80
-	pop		hl
-	pop		de
+	ld		h,high(m4_delta)
 	pop		bc
-	pop		af
 	ret
+
+;----------------------------------------------------------------------
+; Load the next SSDPCM codeword. Sets IYL to 4 remaining deltas.
+;----------------------------------------------------------------------
+m4_fetch
+	ld		a,(z_sp_words)
+	or		a
+	jr		nz,.word
+	ld		a,$ff
+	ld		(m4_nested_header),a
+	call	m4_block_header
+	xor		a
+	ld		(m4_nested_header),a
+.word
+	ld		c,(ix+0)
+	inc		ix
+	ld		a,ixh
+	or		a
+	call	p,m4_rom_next
+	ld		a,(z_sp_words)
+	dec		a
+	ld		(z_sp_words),a
+	ld		iyl,4
+	ld		h,high(m4_delta)
+	ret
+
+m4_nested_header
+	db		0
 
 ;======================================================================
 ; Start of block: rebuild the delta table from the two step sizes
 ;----------------------------------------------------------------------
-; Runs once every 2 passes. Called with h = high(m4_delta), which it
+; Runs when z_sp_words hits 0. Called with h = high(m4_delta), which it
 ; restores before returning.
 ;----------------------------------------------------------------------
 m4_block_header
@@ -424,6 +625,12 @@ m4_stream_end
 	or		a
 	jr		nz,.loop
 	pop		hl								; drop the block header return
+	ld		a,(m4_nested_header)
+	or		a
+	jr		z,m4_stream_stop
+	pop		hl								; drop m4_fetch return
+	xor		a
+	ld		(m4_nested_header),a
 	jr		m4_stream_stop
 
 .loop
@@ -447,6 +654,11 @@ m4_stream_stop
 	ld		(m4_pcm1_enable),a
 	ld		d,iyh
 	ld		e,iyl
+	ld		a,(z_sp_saved_iyl)
+	or		a
+	jr		z,.no_iyl
+	ld		iyl,a
+.no_iyl
 	jp		m4_fill_silence
 
 ;======================================================================
@@ -455,6 +667,9 @@ m4_stream_stop
 m4_pcm1_key_on
 	ld		(hl),a							; 7
 	out_dac_slow
+
+	ld		hl,m4_pcm1_setbank
+	ld		(m4_pcm1_bank_dispatch+1),hl
 
 	ld		a,(z_pcm1_bank)					; 13
 	ld		(z_sp_start_bank),a				; 13
@@ -480,6 +695,154 @@ m4_pcm1_key_on
 	ld		(z_sp_reload),hl				; 16
 	xor		a								; 4
 	ld		(z_sp_words),a					; 13	read a block header first
+	ld		(z_sp_saved_iyl),a
+
+	ld		a,(z_pcm1_pitch)
+	or		a
+	jr		nz,.pit_ok
+	ld		a,8
+.pit_ok
+m4_pcm1_pitch		equ		$+1
+	cp		$00
+	jp		z,m4_pcm1_nopit
+	ld		(m4_pcm1_pitch),a
+
+	ld		de,m4_fill_fast
+	cp		8
+	jr		z,.fast
+	ld		de,m4_fill_pitched
+.fast
+	ld		(m4_fill_dispatch+1),de
+
+	add		a
+	add		a
+	add		a
+	add		low(pitch_update_fill-8)
+	ld		h,high(pitch_update_fill)
+	ld		l,a
+
+	ld		a,(hl)
+	inc		l
+	or		a
+	jr		nz,m4_ps0
+	ld		a,$18
+	ld		(m4_pit0),a
+	ld		a,m4_hold0-m4_pit0-2
+	ld		(m4_pit0+1),a
+	jr		m4_pe0
+m4_ps0
+	ld		a,$fd
+	ld		(m4_pit0),a
+	ld		a,$7d
+	ld		(m4_pit0+1),a
+m4_pe0
+	ld		a,(hl)
+	inc		l
+	or		a
+	jr		nz,m4_ps1
+	ld		a,$18
+	ld		(m4_pit1),a
+	ld		a,m4_hold1-m4_pit1-2
+	ld		(m4_pit1+1),a
+	jr		m4_pe1
+m4_ps1
+	ld		a,$fd
+	ld		(m4_pit1),a
+	ld		a,$7d
+	ld		(m4_pit1+1),a
+m4_pe1
+	ld		a,(hl)
+	inc		l
+	or		a
+	jr		nz,m4_ps2
+	ld		a,$18
+	ld		(m4_pit2),a
+	ld		a,m4_hold2-m4_pit2-2
+	ld		(m4_pit2+1),a
+	jr		m4_pe2
+m4_ps2
+	ld		a,$fd
+	ld		(m4_pit2),a
+	ld		a,$7d
+	ld		(m4_pit2+1),a
+m4_pe2
+	ld		a,(hl)
+	inc		l
+	or		a
+	jr		nz,m4_ps3
+	ld		a,$18
+	ld		(m4_pit3),a
+	ld		a,m4_hold3-m4_pit3-2
+	ld		(m4_pit3+1),a
+	jr		m4_pe3
+m4_ps3
+	ld		a,$fd
+	ld		(m4_pit3),a
+	ld		a,$7d
+	ld		(m4_pit3+1),a
+m4_pe3
+	ld		a,(hl)
+	inc		l
+	or		a
+	jr		nz,m4_ps4
+	ld		a,$18
+	ld		(m4_pit4),a
+	ld		a,m4_hold4-m4_pit4-2
+	ld		(m4_pit4+1),a
+	jr		m4_pe4
+m4_ps4
+	ld		a,$fd
+	ld		(m4_pit4),a
+	ld		a,$7d
+	ld		(m4_pit4+1),a
+m4_pe4
+	ld		a,(hl)
+	inc		l
+	or		a
+	jr		nz,m4_ps5
+	ld		a,$18
+	ld		(m4_pit5),a
+	ld		a,m4_hold5-m4_pit5-2
+	ld		(m4_pit5+1),a
+	jr		m4_pe5
+m4_ps5
+	ld		a,$fd
+	ld		(m4_pit5),a
+	ld		a,$7d
+	ld		(m4_pit5+1),a
+m4_pe5
+	ld		a,(hl)
+	inc		l
+	or		a
+	jr		nz,m4_ps6
+	ld		a,$18
+	ld		(m4_pit6),a
+	ld		a,m4_hold6-m4_pit6-2
+	ld		(m4_pit6+1),a
+	jr		m4_pe6
+m4_ps6
+	ld		a,$fd
+	ld		(m4_pit6),a
+	ld		a,$7d
+	ld		(m4_pit6+1),a
+m4_pe6
+	ld		a,(hl)
+	inc		l
+	or		a
+	jr		nz,m4_ps7
+	ld		a,$18
+	ld		(m4_pit7),a
+	ld		a,m4_hold7-m4_pit7-2
+	ld		(m4_pit7+1),a
+	jr		m4_pe7
+m4_ps7
+	ld		a,$fd
+	ld		(m4_pit7),a
+	ld		a,$7d
+	ld		(m4_pit7+1),a
+m4_pe7
+
+m4_pcm1_nopit
 	ld		a,$fa							; 7		; jp m,**
 	ld		(m4_pcm1_enable),a				; 13
 	ld		hl,z_pcm1						; 10	caller expects page $0e
@@ -493,6 +856,11 @@ m4_pcm2_key_on
 	ld		(hl),a
 	out_dac_slow
 
+	ld		hl,m4_pcm1_setbank
+	ld		(m4_pcm1_bank_dispatch+1),hl
+	ld		hl,m4_pcm2_do_bank
+	ld		(m4_pcm2_bank_dispatch+1),hl
+
 ;-------------------------------------------; 40
 	ld		hl,m4_pcm2_bank_num				; 10
 	ld		a,(z_pcm2_bank)					; 13
@@ -501,7 +869,7 @@ m4_pcm2_key_on
 
 ;-------------------------------------------; 40 + ???
 	ld		(hl),a							; 7
-	write_bank_start_bc m4_pcm2_bank		; 21
+	write_bank_start_bc m4_pcm2_bank_ins		; 21
 	call	write_bank						; 230
 
 .no_bank_switch

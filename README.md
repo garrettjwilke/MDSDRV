@@ -12,7 +12,8 @@ A sound driver for Sega Mega Drive/Genesis.
 		separate tracks with volume control.
 - PCM playback modes:
 	- 2 channel PCM playback at ~17 kHz with volume control
-	- 3 channel PCM playback at ~13.3 kHz with volume control
+	- SSDPCM (ss2) on PCM1 plus one raw PCM channel at ~17 kHz
+	- `pcmmode 3` is accepted as an alias of mode 2
 	- Samples can play at 8 different sampling rates independent of
 		the mixing rate
 - Compact sequence format

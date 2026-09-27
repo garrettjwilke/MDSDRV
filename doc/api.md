@@ -175,8 +175,10 @@ These are currently all the possible command numbers for `mds_command`.
 - **Description**: Set the PCM mixing mode and buffering level.
 
 	The byte in `d1` define the mixing mode. Valid values are
-    2 or 3, for mixing 2 or 3 channels respectively. If the value is 0,
-	the previous PCM mixing mode is kept.
+	2 or 4. 2 is two-channel raw PCM at ~17 kHz. 4 is SSDPCM on PCM1
+	plus raw PCM on PCM2, also at ~17 kHz. A value of 3 is accepted
+	as an alias of 2 (the 3-channel mixer was removed). If the value
+	is 0, the previous PCM mixing mode is kept.
 	See [mdsseq.md](the sequence format) for more information.
 
 	The byte in `d2` define the maximum buffering threshold.

@@ -80,6 +80,7 @@ z_sp_words		equ		z_ssdpcm+7	; codewords left in block
 z_sp_start_bank	equ		z_ssdpcm+8	; loop start bank
 z_sp_start_addr	equ		z_ssdpcm+9	; loop start address
 z_sp_passes		equ		z_ssdpcm+11	; 32 sample passes done (rate check)
+z_sp_saved_iyl	equ		z_ssdpcm+13	; IYL parked while fill uses IYL as bit count
 
 z_stack			equ		$0f00
 z_buffer		equ		$1f00

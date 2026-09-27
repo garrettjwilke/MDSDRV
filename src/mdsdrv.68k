@@ -444,12 +444,16 @@ mds_fade_rate	equ	*
 ;	a0 - pointer to work area
 ;	a6 - pointer to start of Z80 RAM
 ;	a3 - Z80 bus request
-;	d0 - Driver mode should be 2 or 3
+;	d0 - Driver mode should be 2 or 4 (3 aliases to 2)
 ; TRASHES
 ;	--
 ; Vblank interrupts should be disabled when calling this
 ; Z80 needs to be started manually after calling this
 mds_set_pcm_mode
+	cmpi.b	#3,d0
+	bne.s	@not_mode3
+	moveq	#2,d0							; 3ch mixer removed
+@not_mode3
 	andi.b	#$10,w_pcm_mode(work)
 	or.b	d0,w_pcm_mode(work)
 	mds_z80_wait_req
@@ -1570,14 +1574,21 @@ mds_update_seq
 	; NOTE: only @cmd (d1) and @tempreg (d3) may be used as scratch
 	; here; @cmdlen (d2) drives the interpreter's position update.
 	move.b	(tmpa0),@cmd					; read sample rate / SSDPCM marker
+	bpl.s	@cmd_pcm_raw
+	; SSDPCM: keep t_pcm_pitch if pcmrate (or a prior header) already set it.
+	; Drum macros (*301 @301a) reload the instrument on every note and would
+	; otherwise force the .aud header rate (usually 8) over `'pcmrate'`.
+	tst.b	t_pcm_pitch(twork)
+	bne.s	@cmd_pcm_ssd_keep_pitch
 	move.b	@cmd,t_pcm_pitch(twork)
-	bpl.s	@cmd_pcm_raw_length
 	andi.b	#$0f,t_pcm_pitch(twork)			; SSDPCM uses mode-2 pitch 1..8
+@cmd_pcm_ssd_keep_pitch
 	move.w	4(tmpa0),@cmd					; block count (stored little endian)
 	rol.w	#8,@cmd
 	move.w	@cmd,t_pcm_length(twork)
 	bra.s	@cmd_pcm_length_done
-@cmd_pcm_raw_length
+@cmd_pcm_raw
+	move.b	@cmd,t_pcm_pitch(twork)
 	addq	#6,tmpa0
 	move.w	(tmpa0),t_pcm_length(twork)
 @cmd_pcm_length_done
@@ -3088,6 +3099,15 @@ mds_pcm_update
 	bne.w	mds_pcm_key_off
 	bclr	#nf+nf_vol,flag
 	beq.s	@no_set_vol
+	; SSDPCM decode ignores volume; grabbing the Z80 bus would only
+	; freeze the DAC. Key-off still uses mds_z80_pcm_stop (bit 7).
+	moveq	#15,d2
+	and.b	w_pcm_mode(work),d2
+	subq.b	#4,d2
+	bne.s	@do_pcm_vol
+	cmpi.w	#z_pcm1,d0
+	beq.s	@no_set_vol
+@do_pcm_vol
 	mds_z80_get_vol
 	mds_z80_pcm_volume	d0,d1
 
@@ -3173,6 +3193,11 @@ mds_pcm_key_on
 	add.b	w_pcm_bank(work),d1
 	and.l	#$ff,d1
 	move.w	d1,-(sp)						; bank
+	btst	#7,d2
+	beq.s	@prep_no_loop
+	move.b	6(tmpa0),d1						; loop flag, off-bus
+	move.w	d1,-(sp)
+@prep_no_loop
 	move.w	d2,-(sp)						; flags
 
 @prep_no_header
@@ -3181,6 +3206,11 @@ mds_pcm_key_on
 	btst	#0,d3
 	beq.s	@wr_no_header
 	move.w	(sp)+,d2						; flags
+	btst	#7,d2
+	beq.s	@wr_no_loop
+	move.w	(sp)+,d1
+	move.b	d1,z_sp_loop(zram)
+@wr_no_loop
 	move.w	(sp)+,d1						; bank
 	move.w	(sp)+,d4						; addr
 	lea		zp_addr+2(zram,d0),tmpa0
@@ -3189,11 +3219,6 @@ mds_pcm_key_on
 	ror.w	#8,d4
 	move.b	d4,-(tmpa0)						; addr low
 	move.b	d1,-(tmpa0)						; bank
-	btst	#7,d2
-	beq.s	@wr_no_header
-	move.l	a_sdtop,tmpa0
-	adda.w	t_pcm_header(twork),tmpa0
-	move.b	6(tmpa0),z_sp_loop(zram)
 @wr_no_header
 
 	btst	#1,d3

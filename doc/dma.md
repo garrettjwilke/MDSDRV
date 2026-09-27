@@ -112,7 +112,7 @@ This section contains some information on the Z80 driver that can be
 useful when working with the DMA protection.
 
 The Z80 driver reads samples in "batches". Depending on the mixing mode,
-the batch is either 32 or 30 bytes long. The size of the batch has been
+the batch is 32 bytes (mode 2) or 64 bytes (mode 4). The size of the batch has been
 selected to allow mixing, volume control and bank switching of multiple
 channels without causing playback interruptions (which reduces sound
 quality) or high latency.
