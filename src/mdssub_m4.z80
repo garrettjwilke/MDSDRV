@@ -436,7 +436,7 @@ m4_pcm1_disabled
 
 ; key off was triggered by setting the volume to e0-ff
 	and		$1f
-	ld		a,(z_pcm1_vol)
+	ld		(z_pcm1_vol),a
 
 .no_keyoff
 	ld		a,$c3							; 7
@@ -446,18 +446,24 @@ m4_pcm1_disabled
 
 m4_fill_silence
 	ld		b,8								; 7
-	xor		a								; 4
 	out_dac
 
-;-------------------------------------------; = 105
+;-------------------------------------------; = 169 + out_dac(36) = 205
 .loop
+	xor		a								; 4
 	dup		8								; (88)
 		inc		e							; 4
 		ld		(de),a						; 7
 	edup
-	xor		a								; 4
-	djnz	.loop							; 13/8
+	call	burn_31							; 31
+	push	hl								; 11
+	pop		hl								; 10
+	jr		$+2								; 12
 	out_dac
+	djnz	.loop							; 13/8
+	call	burn_27							; 27
+	push	hl								; 11
+	pop		hl								; 10
 	jp		m4_pcm2_bank					; 10
 
 ;======================================================================
@@ -469,7 +475,7 @@ m4_pcm2_disabled
 
 ; key off was triggered by setting the volume to e0-ff
 	and		$1f
-	ld		a,(z_pcm2_vol)
+	ld		(z_pcm2_vol),a
 
 .no_keyoff
 	ld		a,$c3							; 7
@@ -631,6 +637,8 @@ m4_stream_end
 	pop		hl								; drop m4_fetch return
 	xor		a
 	ld		(m4_nested_header),a
+	ld		a,(z_sp_saved_iyl)
+	ld		iyl,a
 	jr		m4_stream_stop
 
 .loop
@@ -654,11 +662,6 @@ m4_stream_stop
 	ld		(m4_pcm1_enable),a
 	ld		d,iyh
 	ld		e,iyl
-	ld		a,(z_sp_saved_iyl)
-	or		a
-	jr		z,.no_iyl
-	ld		iyl,a
-.no_iyl
 	jp		m4_fill_silence
 
 ;======================================================================
