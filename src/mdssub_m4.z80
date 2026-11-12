@@ -277,7 +277,7 @@ m4_pcm1_disabled
 
 ; key off was triggered by setting the volume to e0-ff
 	and		$1f
-	ld		a,(z_pcm1_vol)
+	ld		(z_pcm1_vol),a
 
 .no_keyoff
 	ld		a,$c3							; 7
@@ -287,18 +287,21 @@ m4_pcm1_disabled
 
 m4_fill_silence
 	ld		b,8								; 7
-	xor		a								; 4
-	out_dac
+	out_dac_slow
 
-;-------------------------------------------; = 105
+;-------------------------------------------; = 148 + out_dac_slow(57) = 205
 .loop
+	xor		a								; 4
 	dup		8								; (88)
 		inc		e							; 4
 		ld		(de),a						; 7
 	edup
-	xor		a								; 4
+	rst		burn_dac_pad					; 37
+	inc		hl								; 6
+	out_dac_slow							; 57
 	djnz	.loop							; 13/8
-	out_dac
+	rst		burn_dac_pad					; 37
+	rst		burn_dac_pad					; 37
 	jp		m4_pcm2_bank					; 10
 
 ;======================================================================
@@ -310,7 +313,7 @@ m4_pcm2_disabled
 
 ; key off was triggered by setting the volume to e0-ff
 	and		$1f
-	ld		a,(z_pcm2_vol)
+	ld		(z_pcm2_vol),a
 
 .no_keyoff
 	ld		a,$c3							; 7
